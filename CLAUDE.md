@@ -1,5 +1,3 @@
-# AGENTS.md
-
 > **โค้ดเนม:** FinCouncil (เพราะเป็น multi-agent ที่ทำหน้าที่เหมือน council วิเคราะห์หุ้น)
 > **เอกสารคู่:** `PROJECT_SETUP.md` (bootstrap) · `DATA_SOURCES.md` (ข้อมูล) · `ROADMAP_AND_CHECKPOINTS.md` (เฟส+ด่าน) · `asset-model-routing-strategy.md` (routing) · `cases/` (Fuji/Nidec → ป้อน eval gate)
 
