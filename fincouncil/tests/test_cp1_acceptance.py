@@ -266,6 +266,257 @@ class TestCP1ReconcileDiscrepancy:
 
 
 # ---------------------------------------------------------------------------
+# CP1 Integration Tests: Cache, yfinance, MCP Tools
+# ---------------------------------------------------------------------------
+
+
+class TestCP1CacheIntegration:
+    """Integration tests for CacheManager read-local-first pattern (T1.7)."""
+
+    def test_cache_manager_initializes_with_warehouse(self) -> None:
+        """CacheManager should initialize with a warehouse."""
+        from fincouncil.data.cache.manager import CacheManager
+        from fincouncil.data.store.warehouse import DuckDBWarehouse
+
+        warehouse = DuckDBWarehouse(":memory:")
+        cache = CacheManager(warehouse)
+        assert cache._warehouse is warehouse
+
+    def test_cache_read_local_first_pattern(self) -> None:
+        """Repeated requests should hit cache, not call adapter again."""
+        from fincouncil.data.cache.manager import CacheManager
+        from fincouncil.data.store.warehouse import DuckDBWarehouse
+        from fincouncil.data.schema import PriceRecord, CurrencyCode
+
+        warehouse = DuckDBWarehouse(":memory:")
+        cache = CacheManager(warehouse)
+
+        # Track adapter call count
+        call_count = []
+
+        class FakeAdapter:
+            def is_available(self):
+                return True
+
+            def get_price(self, symbol, start, end):
+                call_count.append(1)
+                return [
+                    {
+                        "date": "2024-01-02",
+                        "open": 100.0,
+                        "high": 105.0,
+                        "low": 99.0,
+                        "close": 104.0,
+                        "volume": 1000000,
+                        "source": "test",
+                    }
+                ]
+
+        adapter = FakeAdapter()
+
+        # First request
+        records1 = cache.get_or_fetch(
+            symbol="US:AAPL",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 31),
+            adapter=adapter,
+            currency="USD",
+            source="test",
+        )
+
+        count_after_first = len(call_count)
+
+        # Second request (should hit cache)
+        records2 = cache.get_or_fetch(
+            symbol="US:AAPL",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 31),
+            adapter=adapter,
+            currency="USD",
+            source="test",
+        )
+
+        # Adapter should not be called again
+        assert len(call_count) == count_after_first
+        assert len(records2) >= 1
+
+
+class TestCP1YFinanceAdapter:
+    """Integration tests for yfinance adapter (T1.9)."""
+
+    def test_yfinance_adapter_returns_valid_records(self) -> None:
+        """yfinance adapter should return records with all required fields."""
+        from fincouncil.data.adapters.yfinance import YFinanceAdapter
+        from decimal import Decimal
+
+        class FakeYFinanceClient:
+            class FakeTicker:
+                def __init__(self, symbol):
+                    self.symbol = symbol
+
+                def history(self, start, end):
+                    import pandas as pd
+
+                    data = {
+                        "Open": [100.0],
+                        "High": [105.0],
+                        "Low": [99.0],
+                        "Close": [104.0],
+                        "Volume": [1000000],
+                    }
+                    df = pd.DataFrame(data, index=pd.to_datetime(["2024-01-02"]))
+                    df.index.name = "Date"
+                    return df
+
+            def Ticker(self, symbol):
+                return self.FakeTicker(symbol)
+
+        adapter = YFinanceAdapter(client=FakeYFinanceClient())
+        records = adapter.get_price("US:AAPL", date(2024, 1, 1), date(2024, 1, 31))
+
+        assert len(records) >= 1
+        for record in records:
+            assert "date" in record
+            assert "open" in record
+            assert "high" in record
+            assert "low" in record
+            assert "close" in record
+            assert "volume" in record
+            # Source metadata
+            assert record["provider"] == "yfinance"
+
+    def test_yfinance_symbol_conversion(self) -> None:
+        """yfinance adapter should convert symbols correctly."""
+        from fincouncil.data.adapters.yfinance import _to_provider_symbol
+
+        test_cases = [
+            ("US:AAPL", "AAPL"),
+            ("SET:PTT", "PTT.BK"),
+            ("HK:700", "00700.HK"),  # Zero-padded
+            ("JP:7203", "7203.T"),
+        ]
+
+        for canonical, expected in test_cases:
+            result = _to_provider_symbol(canonical)
+            assert result == expected, f"Expected {expected} for {canonical}, got {result}"
+
+
+class TestCP1MCPTools:
+    """Integration tests for MCP tools returning canonical records (T1.10)."""
+
+    def test_get_price_returns_records_with_source_and_currency(self) -> None:
+        """get_price must return records with source and currency fields."""
+        from fincouncil.data.mcp.tools import get_price
+        from decimal import Decimal
+
+        class FakeCache:
+            def get_or_fetch(self, symbol, start_date, end_date, adapter, currency, source, force_refresh=False):
+                return [
+                    PriceRecord(
+                        kind="price",
+                        symbol=symbol,
+                        date=start_date,
+                        open=Decimal("100.0"),
+                        high=Decimal("105.0"),
+                        low=Decimal("99.0"),
+                        close=Decimal("104.0"),
+                        volume=1000000,
+                        adjusted_close=Decimal("104.0"),
+                        source=source,
+                        currency=CurrencyCode(currency),
+                        as_of=date.today(),
+                    )
+                ]
+
+        cache = FakeCache()
+        result = get_price(
+            symbol="US:AAPL",
+            start_date="2024-01-01",
+            end_date="2024-01-31",
+            cache_manager=cache,
+            currency="USD",
+        )
+
+        assert len(result) >= 1
+        for record in result:
+            assert "source" in record
+            assert "currency" in record
+            assert record["source"]
+            assert record["currency"]
+
+    def test_list_symbols_returns_valid_metadata(self) -> None:
+        """list_symbols must return dicts with required metadata fields."""
+        from fincouncil.data.mcp.tools import list_symbols
+
+        result = list_symbols(exchange="US")
+
+        assert len(result) >= 1
+        for record in result:
+            assert "exchange" in record
+            assert "symbol" in record
+
+    def test_reconcile_returns_log_with_required_fields(self) -> None:
+        """reconcile must return log with all required fields."""
+        from fincouncil.data.mcp.tools import reconcile
+        from decimal import Decimal
+
+        class MultiSourceCache:
+            def get_or_fetch(self, symbol, start_date, end_date, adapter, currency, source, force_refresh=False):
+                value = Decimal("104.0") if "openbb" in source else Decimal("104.05")
+                return [
+                    PriceRecord(
+                        kind="price",
+                        symbol=symbol,
+                        date=start_date,
+                        open=Decimal("100.0"),
+                        high=Decimal("105.0"),
+                        low=Decimal("99.0"),
+                        close=value,
+                        volume=1000000,
+                        adjusted_close=value,
+                        source=source,
+                        currency=CurrencyCode(currency),
+                        as_of=date.today(),
+                    )
+                ]
+
+        cache = MultiSourceCache()
+
+        # Mock adapters to be available
+        import fincouncil.data.adapters.openbb as openbb_module
+        import fincouncil.data.adapters.yfinance as yfinance_module
+
+        original_openbb = openbb_module.OpenBBAdapter.is_available
+        original_yfinance = yfinance_module.YFinanceAdapter.is_available
+
+        def mock_is_available(self):
+            return True
+
+        openbb_module.OpenBBAdapter.is_available = mock_is_available
+        yfinance_module.YFinanceAdapter.is_available = mock_is_available
+
+        try:
+            result = reconcile(
+                symbol="US:AAPL",
+                field="close",
+                trade_date="2024-01-15",
+                cache_manager=cache,
+            )
+
+            # Verify log has all required fields
+            assert "symbol" in result
+            assert "field" in result
+            assert "values" in result
+            assert "status" in result
+            assert result["source"]
+            assert result["currency"]
+        finally:
+            # Restore originals
+            openbb_module.OpenBBAdapter.is_available = original_openbb
+            yfinance_module.YFinanceAdapter.is_available = original_yfinance
+
+
+# ---------------------------------------------------------------------------
 # CP1 Criterion 4: Council uses data from our layer
 # ---------------------------------------------------------------------------
 
