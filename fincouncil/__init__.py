@@ -1,1 +1,1 @@
-"""FinCouncil fork-extension package."""
+"""FinCouncil — multi-agent stock research system with verified data layer."""
