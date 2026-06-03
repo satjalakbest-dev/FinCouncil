@@ -85,36 +85,38 @@ class TestPriceRecord:
         validate_record(rec)  # must not raise
 
     def test_price_record_rejects_invalid_currency(self) -> None:
+        rec = PriceRecord(
+            source="openbb",
+            currency=_currency("XXX"),  # not in PHASE1_CURRENCY_CODES
+            as_of=date(2026, 6, 2),
+            symbol="NASDAQ:AAPL",
+            date=date(2026, 6, 2),
+            open=Decimal("195.00"),
+            high=Decimal("196.00"),
+            low=Decimal("194.00"),
+            close=Decimal("195.50"),
+            volume=50_000_000,
+            adjusted_close=Decimal("195.50"),
+        )
         with pytest.raises(ValidationError):
-            PriceRecord(
-                source="openbb",
-                currency=_currency("XXX"),  # not in PHASE1_CURRENCY_CODES
-                as_of=date(2026, 6, 2),
-                symbol="NASDAQ:AAPL",
-                date=date(2026, 6, 2),
-                open=Decimal("195.00"),
-                high=Decimal("196.00"),
-                low=Decimal("194.00"),
-                close=Decimal("195.50"),
-                volume=50_000_000,
-                adjusted_close=Decimal("195.50"),
-            )
+            validate_record(rec)
 
     def test_price_record_rejects_low_above_high(self) -> None:
+        rec = PriceRecord(
+            source="openbb",
+            currency=_currency("USD"),
+            as_of=date(2026, 6, 2),
+            symbol="NASDAQ:AAPL",
+            date=date(2026, 6, 2),
+            open=Decimal("195.00"),
+            high=Decimal("194.00"),  # high < low
+            low=Decimal("195.00"),
+            close=Decimal("195.00"),
+            volume=50_000_000,
+            adjusted_close=Decimal("195.00"),
+        )
         with pytest.raises(ValidationError):
-            PriceRecord(
-                source="openbb",
-                currency=_currency("USD"),
-                as_of=date(2026, 6, 2),
-                symbol="NASDAQ:AAPL",
-                date=date(2026, 6, 2),
-                open=Decimal("195.00"),
-                high=Decimal("194.00"),  # high < low
-                low=Decimal("195.00"),
-                close=Decimal("195.00"),
-                volume=50_000_000,
-                adjusted_close=Decimal("195.00"),
-            )
+            validate_record(rec)
 
 
 class TestFundamentalsRecord:
@@ -134,17 +136,18 @@ class TestFundamentalsRecord:
         assert rec.revenue == Decimal("391000000000")
 
     def test_fundamentals_requires_at_least_one_statement_field(self) -> None:
+        rec = FundamentalsRecord(
+            source="openbb",
+            currency=_currency("USD"),
+            as_of=date(2026, 6, 2),
+            symbol="NASDAQ:AAPL",
+            period=Period.FY,
+            fiscal_date=date(2025, 9, 27),
+            # no core statement fields populated — only a ratio
+            pe_ratio=Decimal("33.0"),
+        )
         with pytest.raises(ValidationError):
-            FundamentalsRecord(
-                source="openbb",
-                currency=_currency("USD"),
-                as_of=date(2026, 6, 2),
-                symbol="NASDAQ:AAPL",
-                period=Period.FY,
-                fiscal_date=date(2025, 9, 27),
-                # no core statement fields populated
-                pe_ratio=Decimal("33.0"),
-            )
+            validate_record(rec)
 
 
 class TestReconcileThresholds:
