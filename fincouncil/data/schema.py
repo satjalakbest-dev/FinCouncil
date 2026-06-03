@@ -152,6 +152,9 @@ class SymbolRecord(SourceStampedRecord):
         _require_non_empty("ticker", self.ticker)
         if ":" not in self.symbol:
             raise ValidationError("symbol must use {exchange}:{ticker} convention")
+        symbol_exchange, symbol_ticker = self.symbol.split(":", 1)
+        if symbol_exchange != self.exchange or symbol_ticker != self.ticker:
+            raise ValidationError("symbol must match exchange and ticker fields")
         if not self.provider_symbols:
             raise ValidationError("provider_symbols must include at least one provider mapping")
         for provider, provider_symbol in self.provider_symbols.items():

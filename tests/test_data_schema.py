@@ -119,3 +119,42 @@ def test_reconcile_log_requires_two_sources_and_flag_explanation() -> None:
     )
 
     validate_record(record)
+
+
+def test_symbol_record_covers_t1_2_required_market_fixtures() -> None:
+    fixtures = [
+        ("NASDAQ:AAPL", "NASDAQ", "AAPL", "USD", {"yfinance": "AAPL"}),
+        ("TSE:7011", "TSE", "7011", "JPY", {"yfinance": "7011.T"}),
+        ("SET:PTT", "SET", "PTT", "THB", {"yfinance": "PTT.BK"}),
+        ("HKEX:00700", "HKEX", "00700", "HKD", {"yfinance": "00700.HK"}),
+        ("SSE:600519", "SSE", "600519", "CNY", {"yfinance": "600519.SS"}),
+        ("SZSE:000001", "SZSE", "000001", "CNY", {"yfinance": "000001.SZ"}),
+    ]
+
+    for symbol, exchange, ticker, currency, provider_symbols in fixtures:
+        validate_record(
+            SymbolRecord(
+                symbol=symbol,
+                exchange=exchange,
+                ticker=ticker,
+                provider_symbols=provider_symbols,
+                source="t1.2-review-fixture",
+                currency=CurrencyCode(currency),
+                as_of=date(2026, 6, 2),
+            )
+        )
+
+
+def test_symbol_record_rejects_mismatched_symbol_components() -> None:
+    record = SymbolRecord(
+        symbol="NYSE:AAPL",
+        exchange="NASDAQ",
+        ticker="AAPL",
+        provider_symbols={"yfinance": "AAPL"},
+        source="t1.2-review-fixture",
+        currency=CurrencyCode("USD"),
+        as_of=date(2026, 6, 2),
+    )
+
+    with pytest.raises(ValidationError, match="match exchange and ticker"):
+        validate_record(record)
