@@ -6,108 +6,154 @@ required by CP1/T1.1: every record has source + currency + as_of.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
+from decimal import Decimal
 
 import pytest
 
 from fincouncil.data.schema import (
-    CanonicalRecord,
-    FiscalPeriod,
+    CurrencyCode,
     FundamentalsRecord,
+    Period,
     PriceRecord,
-    RecordType,
-    ReconcileResult,
-    SourceTag,
+    ReconcileLogRecord,
+    ReconcileStatus,
     SymbolRecord,
+    ValidationError,
+    validate_record,
 )
 
 
-class TestSourceTag:
-    """SourceTag must carry provider name and fetch timestamp."""
-
-    def test_create_source_tag(self) -> None:
-        tag = SourceTag(provider="openbb", fetched_at=datetime(2026, 6, 2))
-        assert tag.provider == "openbb"
-        assert tag.fetched_at.year == 2026
-
-    def test_source_tag_is_frozen(self) -> None:
-        tag = SourceTag(provider="openbb", fetched_at=datetime(2026, 6, 2))
-        with pytest.raises(AttributeError):
-            tag.provider = "yfinance"  # type: ignore[misc]
+def _currency(code: str) -> CurrencyCode:
+    return CurrencyCode(code)
 
 
 class TestPriceRecord:
     """PriceRecord must satisfy the canonical record contract."""
 
-    def test_price_record_has_all_fields(self) -> None:
+    def test_price_record_creation(self) -> None:
         rec = PriceRecord(
-            symbol="NASDAQ:AAPL",
-            source=SourceTag(provider="openbb", fetched_at=datetime(2026, 6, 2)),
-            currency="USD",
+            source="openbb",
+            currency=_currency("USD"),
             as_of=date(2026, 6, 2),
-            open=195.0,
-            high=196.0,
-            low=194.0,
-            close=195.5,
+            symbol="NASDAQ:AAPL",
+            date=date(2026, 6, 2),
+            open=Decimal("195.00"),
+            high=Decimal("196.00"),
+            low=Decimal("194.00"),
+            close=Decimal("195.50"),
             volume=50_000_000,
-            adjusted_close=195.5,
+            adjusted_close=Decimal("195.50"),
         )
-        assert rec.record_type == RecordType.PRICE
+        assert rec.kind == "price"
         assert rec.symbol == "NASDAQ:AAPL"
         assert rec.currency == "USD"
-        assert rec.close == 195.5
-        assert rec.source.provider == "openbb"
+        assert rec.close == Decimal("195.50")
+        assert rec.source == "openbb"
 
     def test_price_record_is_frozen(self) -> None:
         rec = PriceRecord(
-            symbol="NASDAQ:AAPL",
-            source=SourceTag(provider="openbb", fetched_at=datetime(2026, 6, 2)),
-            currency="USD",
+            source="openbb",
+            currency=_currency("USD"),
             as_of=date(2026, 6, 2),
+            symbol="NASDAQ:AAPL",
+            date=date(2026, 6, 2),
+            open=Decimal("195.00"),
+            high=Decimal("196.00"),
+            low=Decimal("194.00"),
+            close=Decimal("195.50"),
+            volume=50_000_000,
+            adjusted_close=Decimal("195.50"),
         )
         with pytest.raises(AttributeError):
-            rec.close = 200.0  # type: ignore[misc]
+            rec.close = Decimal("200.0")  # type: ignore[misc]
 
-    def test_price_record_defaults_to_none(self) -> None:
-        """Optional OHLCV fields default to None when not provided."""
+    def test_price_record_validates(self) -> None:
         rec = PriceRecord(
-            symbol="NASDAQ:AAPL",
-            source=SourceTag(provider="openbb", fetched_at=datetime(2026, 6, 2)),
-            currency="USD",
+            source="openbb",
+            currency=_currency("USD"),
             as_of=date(2026, 6, 2),
+            symbol="NASDAQ:AAPL",
+            date=date(2026, 6, 2),
+            open=Decimal("195.00"),
+            high=Decimal("196.00"),
+            low=Decimal("194.00"),
+            close=Decimal("195.50"),
+            volume=50_000_000,
+            adjusted_close=Decimal("195.50"),
         )
-        assert rec.open is None
-        assert rec.high is None
-        assert rec.low is None
-        assert rec.close is None
-        assert rec.volume is None
-        assert rec.adjusted_close is None
+        validate_record(rec)  # must not raise
+
+    def test_price_record_rejects_invalid_currency(self) -> None:
+        with pytest.raises(ValidationError):
+            PriceRecord(
+                source="openbb",
+                currency=_currency("XXX"),  # not in PHASE1_CURRENCY_CODES
+                as_of=date(2026, 6, 2),
+                symbol="NASDAQ:AAPL",
+                date=date(2026, 6, 2),
+                open=Decimal("195.00"),
+                high=Decimal("196.00"),
+                low=Decimal("194.00"),
+                close=Decimal("195.50"),
+                volume=50_000_000,
+                adjusted_close=Decimal("195.50"),
+            )
+
+    def test_price_record_rejects_low_above_high(self) -> None:
+        with pytest.raises(ValidationError):
+            PriceRecord(
+                source="openbb",
+                currency=_currency("USD"),
+                as_of=date(2026, 6, 2),
+                symbol="NASDAQ:AAPL",
+                date=date(2026, 6, 2),
+                open=Decimal("195.00"),
+                high=Decimal("194.00"),  # high < low
+                low=Decimal("195.00"),
+                close=Decimal("195.00"),
+                volume=50_000_000,
+                adjusted_close=Decimal("195.00"),
+            )
 
 
 class TestFundamentalsRecord:
     def test_fundamentals_record_creation(self) -> None:
         rec = FundamentalsRecord(
-            symbol="NASDAQ:AAPL",
-            source=SourceTag(provider="openbb", fetched_at=datetime(2026, 6, 2)),
-            currency="USD",
+            source="openbb",
+            currency=_currency("USD"),
             as_of=date(2026, 6, 2),
-            period=FiscalPeriod.FY,
+            symbol="NASDAQ:AAPL",
+            period=Period.FY,
             fiscal_date=date(2025, 9, 27),
-            line_items={"revenue": 391e9},
-            ratios={"pe_ratio": 33.0},
+            revenue=Decimal("391000000000"),
+            pe_ratio=Decimal("33.0"),
         )
-        assert rec.record_type == RecordType.FUNDAMENTALS
-        assert rec.period == FiscalPeriod.FY
-        assert rec.line_items["revenue"] == 391e9
+        assert rec.kind == "fundamentals"
+        assert rec.period == Period.FY
+        assert rec.revenue == Decimal("391000000000")
+
+    def test_fundamentals_requires_at_least_one_statement_field(self) -> None:
+        with pytest.raises(ValidationError):
+            FundamentalsRecord(
+                source="openbb",
+                currency=_currency("USD"),
+                as_of=date(2026, 6, 2),
+                symbol="NASDAQ:AAPL",
+                period=Period.FY,
+                fiscal_date=date(2025, 9, 27),
+                # no core statement fields populated
+                pe_ratio=Decimal("33.0"),
+            )
 
 
 class TestReconcileThresholds:
     """Verify threshold constants match the spec."""
 
     def test_price_threshold(self) -> None:
-        from fincouncil.data.schema import RECONCILE_THRESHOLD_PRICE_PCT
-        assert RECONCILE_THRESHOLD_PRICE_PCT == 0.5
+        from fincouncil.data.reconcile.engine import DEFAULT_PRICE_THRESHOLD_PCT
+        assert DEFAULT_PRICE_THRESHOLD_PCT == Decimal("0.5")
 
     def test_fundamentals_threshold(self) -> None:
-        from fincouncil.data.schema import RECONCILE_THRESHOLD_FUNDAMENTALS_PCT
-        assert RECONCILE_THRESHOLD_FUNDAMENTALS_PCT == 1.0
+        from fincouncil.data.reconcile.engine import DEFAULT_FUNDAMENTALS_THRESHOLD_PCT
+        assert DEFAULT_FUNDAMENTALS_THRESHOLD_PCT == Decimal("1.0")
