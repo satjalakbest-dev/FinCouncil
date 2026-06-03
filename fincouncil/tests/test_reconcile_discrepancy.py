@@ -120,7 +120,7 @@ class TestDiscrepancyDetection:
             record_type="price",
         )
         assert result.flagged is True
-        assert result.diff_pct > 40.0  # ~40%
+        assert result.diff_pct >= 40.0  # ~40% (195 vs 130 = 40.0% exactly)
 
     def test_fundamentals_discrepancy_flagged(self, engine: ReconcileEngine) -> None:
         """Fundamentals use 1% threshold — a 5% diff must be flagged."""

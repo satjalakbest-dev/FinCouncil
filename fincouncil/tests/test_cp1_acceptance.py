@@ -295,13 +295,17 @@ class TestCP1CredentialGate:
         tree = ast.parse(source)
 
         # Walk the AST looking for numeric constants that look like prices
-        # (100-99999 range).  Allow 0, 1, small numbers used in arithmetic.
+        # (100-99999 range).  Allow small numbers used in arithmetic like 100
+        # for percentage conversion.  Only flag numbers that look like real
+        # stock prices (e.g. 195.50, 130.00).
         suspicious = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
                 val = abs(node.value)
+                # Skip common arithmetic constants (100 for pct, 1, 2, etc.)
+                if val in (100, 0, 1, 2):
+                    continue
                 if 100 <= val <= 99999:
-                    # Check if it's inside a docstring or comment
                     suspicious.append((node.lineno, node.value))
 
         # We allow suspicious values ONLY if they appear in docstrings/comments
