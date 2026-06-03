@@ -1,41 +1,57 @@
 """Reconcile engine — compare a field across providers and flag discrepancies.
 
+The engine is the core of the data moat (T1.8). Every significant number
+(price, key fundamental line items) is compared across ≥2 sources.
+Discrepancies exceeding the threshold are flagged, **never swallowed**.
+
+The engine produces canonical ``ReconcileLogRecord`` objects that can be
+persisted to the ``reconcile_log`` table via the store layer.
+
+Reference: DATA_SOURCES.md "Reconcile / Verify Policy"
+           PHASE1_DATA_LAYER_SPRINT.md T1.8
+
+Thresholds:
+- Price EOD: 0.5%
+- Fundamentals: 1.0%
+
 Usage::
 
     from fincouncil.data.reconcile.engine import ReconcileEngine
 
     engine = ReconcileEngine()
-    result = engine.reconcile(
-        symbol="NYSE:AAPL",
+    record = engine.reconcile(
+        symbol="NASDAQ:AAPL",
         field="close",
         as_of=date(2026, 6, 2),
         currency="USD",
         values_by_source={
-            "openbb": 195.50,
-            "yfinance": 195.48,
+            "openbb": Decimal("195.50"),
+            "yfinance": Decimal("195.48"),
         },
-        record_type="price",
+        record_kind="price",
     )
-    assert not result.flagged  # within 0.5%
-
-Design contract (CP1 / T1.8):
-- Price threshold: 0.5%
-- Fundamentals threshold: 1.0%
-- Injected discrepancies MUST be flagged (never swallowed).
-- Every reconciliation writes a ``ReconcileResult`` that can be persisted.
+    assert record.status == ReconcileStatus.PASS
 """
 
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional
+from decimal import Decimal
+from typing import Mapping
 
 from fincouncil.data.schema import (
-    RECONCILE_THRESHOLD_FUNDAMENTALS_PCT,
-    RECONCILE_THRESHOLD_PRICE_PCT,
-    RecordType,
-    ReconcileResult,
+    CurrencyCode,
+    ReconcileLogRecord,
+    ReconcileStatus,
 )
+
+# Default thresholds (from DATA_SOURCES.md)
+DEFAULT_PRICE_THRESHOLD_PCT = Decimal("0.5")
+DEFAULT_FUNDAMENTALS_THRESHOLD_PCT = Decimal("1.0")
+
+
+class InsufficientSourcesError(ValueError):
+    """Raised when reconcile is called with fewer than 2 sources."""
 
 
 class ReconcileEngine:
@@ -43,7 +59,9 @@ class ReconcileEngine:
 
     The engine is stateless — it does not persist results itself.
     The caller (or the store layer) is responsible for writing
-    ``ReconcileResult`` objects to the ``reconcile_log`` table.
+    ``ReconcileLogRecord`` objects to the ``reconcile_log`` table.
+
+    All monetary values use ``Decimal`` for precision.
     """
 
     def reconcile(
@@ -51,29 +69,29 @@ class ReconcileEngine:
         symbol: str,
         field: str,
         as_of: date,
-        currency: str,
-        values_by_source: dict[str, float],
-        record_type: str = "price",
+        currency: CurrencyCode,
+        values_by_source: Mapping[str, Decimal],
+        record_kind: str = "price",
         *,
-        price_threshold_pct: float = RECONCILE_THRESHOLD_PRICE_PCT,
-        fundamentals_threshold_pct: float = RECONCILE_THRESHOLD_FUNDAMENTALS_PCT,
-    ) -> ReconcileResult:
-        """Compare values from ≥2 sources and return a ``ReconcileResult``.
+        price_threshold_pct: Decimal = DEFAULT_PRICE_THRESHOLD_PCT,
+        fundamentals_threshold_pct: Decimal = DEFAULT_FUNDAMENTALS_THRESHOLD_PCT,
+    ) -> ReconcileLogRecord:
+        """Compare values from ≥2 sources and return a ``ReconcileLogRecord``.
 
         Parameters
         ----------
         symbol:
-            Canonical symbol (e.g. ``"NYSE:AAPL"``).
+            Canonical symbol (e.g. ``"NASDAQ:AAPL"``).
         field:
             Field name being reconciled (e.g. ``"close"``, ``"revenue"``).
         as_of:
             Reference date for the data point.
         currency:
-            ISO-4217 currency code.
+            ISO-4217 currency code (``CurrencyCode``).
         values_by_source:
             Mapping of provider name → value.  Must contain ≥2 entries
             for a meaningful comparison.
-        record_type:
+        record_kind:
             ``"price"`` or ``"fundamentals"`` — determines which
             threshold applies.
         price_threshold_pct:
@@ -83,29 +101,31 @@ class ReconcileEngine:
 
         Returns
         -------
-        ReconcileResult
-            Includes ``flagged`` (bool), ``diff_pct``, and ``explanation``.
+        ReconcileLogRecord
+            A canonical record suitable for persisting to ``reconcile_log``.
+
+        Raises
+        ------
+        InsufficientSourcesError
+            If fewer than 2 sources are provided.
 
         Notes
         -----
-        - If fewer than 2 sources are provided, ``flagged`` is False and
-          ``diff_pct`` is None with an explanatory note.
         - Percentage diff = ``|max - min| / mean * 100``.
         - A flagged result is never demoted — once the diff exceeds the
           threshold, it is recorded truthfully.
+        - Uses ``Decimal`` arithmetic throughout for financial precision.
         """
         if len(values_by_source) < 2:
-            return ReconcileResult(
-                symbol=symbol,
-                field=field,
-                as_of=as_of,
-                currency=currency,
-                values=values_by_source,
-                diff_pct=None,
-                flagged=False,
-                explanation=f"Only {len(values_by_source)} source(s); "
-                            f"reconciliation requires ≥2.",
+            raise InsufficientSourcesError(
+                f"Reconciliation requires ≥2 sources, got {len(values_by_source)}"
             )
+
+        threshold = (
+            fundamentals_threshold_pct
+            if record_kind == "fundamentals"
+            else price_threshold_pct
+        )
 
         vals = list(values_by_source.values())
         max_val = max(vals)
@@ -114,46 +134,43 @@ class ReconcileEngine:
 
         # Guard against division by zero
         if mean_val == 0:
-            diff_pct = 0.0 if max_val == 0 else float("inf")
+            diff_pct = Decimal("0") if max_val == 0 else Decimal("Infinity")
         else:
             diff_pct = abs(max_val - min_val) / abs(mean_val) * 100
 
-        threshold = (
-            fundamentals_threshold_pct
-            if record_type == "fundamentals"
-            else price_threshold_pct
-        )
-
-        flagged = diff_pct > threshold
+        status = ReconcileStatus.FLAG if diff_pct > threshold else ReconcileStatus.PASS
 
         explanation = self._explain(
-            values_by_source, diff_pct, threshold, flagged, field
+            values_by_source, diff_pct, threshold, status, field
         )
 
-        return ReconcileResult(
+        return ReconcileLogRecord(
+            source="reconcile_engine",
+            currency=currency,
+            as_of=as_of,
             symbol=symbol,
             field=field,
-            as_of=as_of,
-            currency=currency,
+            date=as_of,
             values=dict(values_by_source),
             diff_pct=diff_pct,
-            flagged=flagged,
+            threshold_pct=threshold,
+            status=status,
             explanation=explanation,
         )
 
     @staticmethod
     def _explain(
-        values_by_source: dict[str, float],
-        diff_pct: float,
-        threshold: float,
-        flagged: bool,
+        values_by_source: Mapping[str, Decimal],
+        diff_pct: Decimal,
+        threshold: Decimal,
+        status: ReconcileStatus,
         field: str,
     ) -> str:
         """Generate a human-readable explanation for the reconcile outcome."""
         sources_str = ", ".join(
-            f"{src}={val:.6g}" for src, val in values_by_source.items()
+            f"{src}={val}" for src, val in values_by_source.items()
         )
-        if flagged:
+        if status == ReconcileStatus.FLAG:
             return (
                 f"DISCREPANCY on '{field}': {sources_str} "
                 f"(diff={diff_pct:.4f}%, threshold={threshold:.1f}%)"
