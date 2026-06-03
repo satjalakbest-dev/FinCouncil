@@ -1,0 +1,1 @@
+"""FinCouncil application package."""
