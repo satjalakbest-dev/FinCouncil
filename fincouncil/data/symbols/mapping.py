@@ -1,177 +1,139 @@
-"""Bidirectional symbol mapping — canonical ↔ provider-specific formats.
+"""Canonical symbol mapping for FinCouncil data providers.
 
-This is an independent clean-room implementation for T1.2 cross-check.
-It does NOT import or reference worker-2's code.
-
-Canonical format: ``{exchange_code}:{local_ticker}``
-    Examples: ``US:AAPL``, ``JP:7011``, ``TH:PTT``, ``HK:00700``, ``SH:600519``
-
-Provider formats:
-    Yahoo Finance: bare ticker (US), or ticker + suffix (e.g. ``7011.T``, ``PTT.BK``)
-
-Design choices (independent from worker-2):
-  - Exchange codes are short uppercase strings, NOT MIC codes.
-  - Local ticker is the exchange-native identifier WITHOUT provider suffix.
-  - Resolution is deterministic: given (exchange_code, local_ticker) → exactly
-    one provider symbol, and vice versa.
-  - Zero-padding is preserved: HK ``00700`` stays ``00700`` in canonical form
-    even though Yahoo uses ``0700.HK`` ( Yahoo strips leading zeros).
+The canonical FinCouncil convention is ``{exchange}:{ticker}`` where the
+exchange is an internal market code and the ticker is the exchange-local symbol.
+Provider symbols are currently normalized for Yahoo/OpenBB-style suffixes.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from typing import Optional
-
-from .exchange import ExchangeInfo, REGISTRY
-
-
-# Pattern for canonical symbols: EXCHANGE:LOCAL_TICKER
-_CANONICAL_RE = re.compile(r"^([A-Za-z]{2,4}):([A-Za-z0-9]+)$")
-
-# Pattern for Yahoo-style symbols with suffix: TICKER.SUFFIX
-_YAHOO_SUFFIX_RE = re.compile(
-    r"^(.+?)\.([A-Za-z]{1,3})$"
-)
-
-# Known Yahoo suffix → exchange code mapping (reverse of exchange registry)
-_YAHOO_SUFFIX_MAP: dict[str, str] = {}
-
-
-def _build_yahoo_suffix_map() -> dict[str, str]:
-    """Build reverse mapping from Yahoo suffix → exchange code."""
-    mapping: dict[str, str] = {}
-    for ex in REGISTRY.all_exchanges:
-        if ex.yahoo_suffix:
-            # yahoo_suffix is like ".T" → strip the dot for lookup
-            suffix_key = ex.yahoo_suffix.lstrip(".")
-            mapping[suffix_key] = ex.code
-    return mapping
-
-
-# Initialize on module load
-_YAHOO_SUFFIX_MAP = _build_yahoo_suffix_map()
+from typing import Final
 
 
 @dataclass(frozen=True)
-class CanonicalSymbol:
-    """Parsed canonical symbol with resolved exchange metadata."""
+class ExchangeRule:
+    """Mapping rule between a canonical exchange code and provider suffix."""
 
-    exchange_code: str
-    local_ticker: str
-    exchange: ExchangeInfo
-
-    @property
-    def currency(self) -> str:
-        return self.exchange.currency
-
-    @property
-    def mic(self) -> str:
-        return self.exchange.mic
-
-    @property
-    def country(self) -> str:
-        return self.exchange.country
-
-    def to_yahoo(self) -> str:
-        """Convert to Yahoo Finance ticker format."""
-        suffix = self.exchange.yahoo_suffix
-        ticker = self.local_ticker
-        # Yahoo Finance strips leading zeros from HK tickers: 00700 → 0700
-        if self.exchange.code == "HK":
-            ticker = ticker.lstrip("0") or ticker  # keep at least one char
-        return f"{ticker}{suffix}"
-
-    def __str__(self) -> str:
-        return f"{self.exchange_code}:{self.local_ticker}"
+    canonical_exchange: str
+    provider_suffix: str
+    aliases: tuple[str, ...] = ()
+    pad_width: int | None = None
 
 
-def parse_canonical(symbol: str) -> Optional[CanonicalSymbol]:
-    """Parse a canonical ``EXCHANGE:TICKER`` string.
+_RULES: Final[tuple[ExchangeRule, ...]] = (
+    ExchangeRule("US", "", aliases=("NASDAQ", "NYSE", "AMEX")),
+    ExchangeRule("TSE", ".T", aliases=("JP", "JPX", "TYO", "TOKYO")),
+    ExchangeRule("SET", ".BK", aliases=("TH", "THAI", "BKK")),
+    ExchangeRule("HKEX", ".HK", aliases=("HK", "HKG"), pad_width=5),
+    ExchangeRule("SSE", ".SS", aliases=("SH", "SHA", "SHANGHAI")),
+    ExchangeRule("SZSE", ".SZ", aliases=("SZ", "SHE", "SHENZHEN")),
+)
 
-    Returns ``None`` if the format is invalid or the exchange code is unknown.
+_RULE_BY_EXCHANGE: Final[dict[str, ExchangeRule]] = {
+    code: rule
+    for rule in _RULES
+    for code in (rule.canonical_exchange, *rule.aliases)
+}
+_RULE_BY_SUFFIX: Final[dict[str, ExchangeRule]] = {
+    rule.provider_suffix: rule for rule in _RULES if rule.provider_suffix
+}
+
+
+class SymbolMappingError(ValueError):
+    """Raised when a symbol cannot be converted safely."""
+
+
+def canonicalize_symbol(canonical_symbol: str) -> str:
+    """Return a normalized ``{exchange}:{ticker}`` canonical symbol."""
+
+    exchange, ticker = _split_canonical(canonical_symbol)
+    rule = _rule_for_exchange(exchange)
+    return f"{rule.canonical_exchange}:{_normalize_ticker(ticker, rule)}"
+
+
+def canonical_to_provider(canonical_symbol: str) -> str:
+    """Convert ``{exchange}:{ticker}`` to a provider suffix symbol.
+
+    Examples:
+        ``US:AAPL`` -> ``AAPL``
+        ``TSE:7011`` -> ``7011.T``
+        ``SET:PTT`` -> ``PTT.BK``
+        ``HKEX:700`` -> ``00700.HK``
     """
-    m = _CANONICAL_RE.match(symbol.strip())
-    if not m:
-        return None
-    code = m.group(1).upper()
-    ticker = m.group(2).upper()
-    ex = REGISTRY.resolve(code)
-    if ex is None:
-        return None
-    return CanonicalSymbol(
-        exchange_code=ex.code,
-        local_ticker=ticker,
-        exchange=ex,
-    )
+
+    exchange, ticker = _split_canonical(canonical_symbol)
+    rule = _rule_for_exchange(exchange)
+    normalized_ticker = _normalize_ticker(ticker, rule)
+    return f"{normalized_ticker}{rule.provider_suffix}"
 
 
-def from_yahoo(yahoo_symbol: str) -> Optional[CanonicalSymbol]:
-    """Convert a Yahoo Finance ticker to canonical form.
+def provider_to_canonical(provider_symbol: str, *, default_exchange: str = "US") -> str:
+    """Convert a provider suffix symbol to canonical ``{exchange}:{ticker}``.
 
-    Handles:
-      - Bare US tickers: ``AAPL`` → ``US:AAPL``
-      - Suffixed tickers: ``7011.T`` → ``JP:7011``, ``PTT.BK`` → ``TH:PTT``
-      - HK with stripped zeros: ``0700.HK`` → ``HK:00700``
-
-    Returns ``None`` if the suffix is unknown or format is unexpected.
+    Provider symbols without a known suffix are treated as ``default_exchange``;
+    the default is ``US`` for plain Yahoo/OpenBB tickers such as ``AAPL``.
     """
-    symbol = yahoo_symbol.strip()
 
-    # Check for suffix pattern
-    m = _YAHOO_SUFFIX_RE.match(symbol)
-    if m:
-        ticker_part = m.group(1).upper()
-        suffix = m.group(2).upper()
-        code = _YAHOO_SUFFIX_MAP.get(suffix)
-        if code is None:
-            return None
-        ex = REGISTRY.by_code(code)
-        if ex is None:
-            return None
-        # Re-pad HK tickers: Yahoo uses 0700 but canonical is 00700 (5 digits)
-        if code == "HK" and len(ticker_part) < 5:
-            ticker_part = ticker_part.zfill(5)
-        return CanonicalSymbol(
-            exchange_code=code,
-            local_ticker=ticker_part,
-            exchange=ex,
+    symbol = _clean_symbol(provider_symbol, field_name="provider_symbol")
+    upper_symbol = symbol.upper()
+
+    for suffix, rule in sorted(_RULE_BY_SUFFIX.items(), key=lambda item: len(item[0]), reverse=True):
+        if upper_symbol.endswith(suffix):
+            raw_ticker = upper_symbol[: -len(suffix)]
+            if not raw_ticker:
+                raise SymbolMappingError(f"provider symbol {provider_symbol!r} has no ticker before suffix")
+            return f"{rule.canonical_exchange}:{_normalize_ticker(raw_ticker, rule)}"
+
+    rule = _rule_for_exchange(default_exchange)
+    return f"{rule.canonical_exchange}:{_normalize_ticker(upper_symbol, rule)}"
+
+
+def supported_exchanges() -> tuple[str, ...]:
+    """Return canonical exchange codes supported by the mapper."""
+
+    return tuple(rule.canonical_exchange for rule in _RULES)
+
+
+def _split_canonical(canonical_symbol: str) -> tuple[str, str]:
+    symbol = _clean_symbol(canonical_symbol, field_name="canonical_symbol")
+    if ":" not in symbol:
+        raise SymbolMappingError(
+            f"canonical symbol {canonical_symbol!r} must use the '{{exchange}}:{{ticker}}' format"
         )
-
-    # No suffix → assume US market
-    ex = REGISTRY.by_code("US")
-    if ex is None:
-        return None
-    return CanonicalSymbol(
-        exchange_code="US",
-        local_ticker=symbol.upper(),
-        exchange=ex,
-    )
+    exchange, ticker = symbol.split(":", 1)
+    if not exchange or not ticker:
+        raise SymbolMappingError(f"canonical symbol {canonical_symbol!r} must include exchange and ticker")
+    return exchange.upper(), ticker.upper()
 
 
-def to_yahoo(symbol: str) -> Optional[str]:
-    """Convert a canonical symbol string to Yahoo Finance format.
-
-    Convenience wrapper: ``to_yahoo("JP:7011")`` → ``"7011.T"``
-    """
-    parsed = parse_canonical(symbol)
-    if parsed is None:
-        return None
-    return parsed.to_yahoo()
+def _rule_for_exchange(exchange: str) -> ExchangeRule:
+    try:
+        return _RULE_BY_EXCHANGE[exchange.upper()]
+    except KeyError as exc:
+        supported = ", ".join(supported_exchanges())
+        raise SymbolMappingError(f"unsupported exchange {exchange!r}; supported exchanges: {supported}") from exc
 
 
-def roundtrip_yahoo(canonical: str) -> Optional[str]:
-    """Round-trip: canonical → Yahoo → canonical.
+def _normalize_ticker(ticker: str, rule: ExchangeRule) -> str:
+    cleaned = _clean_symbol(ticker, field_name="ticker").upper()
+    if ":" in cleaned:
+        raise SymbolMappingError(f"ticker {ticker!r} must not contain ':'")
+    if rule.pad_width is not None and cleaned.isdigit():
+        if len(cleaned) > rule.pad_width:
+            raise SymbolMappingError(
+                f"ticker {ticker!r} exceeds {rule.pad_width} digits for {rule.canonical_exchange}"
+            )
+        return cleaned.zfill(rule.pad_width)
+    return cleaned
 
-    Returns the canonical string produced by converting to Yahoo and back.
-    ``None`` means the round-trip failed (unknown exchange/suffix).
-    """
-    parsed = parse_canonical(canonical)
-    if parsed is None:
-        return None
-    yahoo_sym = parsed.to_yahoo()
-    back = from_yahoo(yahoo_sym)
-    if back is None:
-        return None
-    return str(back)
+
+def _clean_symbol(value: str, *, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise SymbolMappingError(f"{field_name} must be a string")
+    cleaned = value.strip()
+    if not cleaned:
+        raise SymbolMappingError(f"{field_name} must not be empty")
+    if any(char.isspace() for char in cleaned):
+        raise SymbolMappingError(f"{field_name} must not contain whitespace")
+    return cleaned
