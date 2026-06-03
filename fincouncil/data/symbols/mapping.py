@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+from fincouncil.data.symbols.exchange import REGISTRY
+
 
 @dataclass(frozen=True)
 class ExchangeRule:
@@ -42,6 +44,20 @@ _RULE_BY_SUFFIX: Final[dict[str, ExchangeRule]] = {
 
 class SymbolMappingError(ValueError):
     """Raised when a symbol cannot be converted safely."""
+
+
+@dataclass(frozen=True)
+class CanonicalSymbol:
+    """Parsed canonical symbol with exchange metadata for review fixtures."""
+
+    exchange_code: str
+    local_ticker: str
+    currency: str
+    mic: str
+    country: str
+
+    def __str__(self) -> str:
+        return f"{self.exchange_code}:{self.local_ticker}"
 
 
 def canonicalize_symbol(canonical_symbol: str) -> str:
@@ -136,4 +152,106 @@ def _clean_symbol(value: str, *, field_name: str) -> str:
         raise SymbolMappingError(f"{field_name} must not be empty")
     if any(char.isspace() for char in cleaned):
         raise SymbolMappingError(f"{field_name} must not contain whitespace")
+    return cleaned
+
+
+def parse_canonical(canonical_symbol: str) -> CanonicalSymbol | None:
+    """Parse ``{exchange}:{ticker}`` using the exchange registry surface.
+
+    This compatibility API preserves the independent worker-5 review tests while
+    the worker-2 mapper remains the primary string conversion API.
+    """
+
+    try:
+        symbol = _clean_symbol(canonical_symbol, field_name="canonical_symbol")
+    except SymbolMappingError:
+        return None
+    if symbol.count(":") != 1:
+        return None
+    exchange_code, ticker = symbol.split(":", 1)
+    if not exchange_code or not ticker:
+        return None
+    exchange = REGISTRY.resolve(exchange_code)
+    if exchange is None:
+        return None
+    try:
+        local_ticker = _normalize_registry_ticker(ticker, exchange.code)
+    except SymbolMappingError:
+        return None
+    return CanonicalSymbol(
+        exchange_code=exchange.code,
+        local_ticker=local_ticker,
+        currency=exchange.currency,
+        mic=exchange.mic,
+        country=exchange.country,
+    )
+
+
+def to_yahoo(canonical_symbol: str) -> str | None:
+    """Convert registry canonical symbols (``US/JP/TH/HK/SH/SZ``) to Yahoo."""
+
+    parsed = parse_canonical(canonical_symbol)
+    if parsed is None:
+        return None
+    exchange = REGISTRY.by_code(parsed.exchange_code)
+    if exchange is None:
+        return None
+    ticker = parsed.local_ticker
+    if parsed.exchange_code == "HK" and ticker.isdigit():
+        ticker = ticker[-4:].zfill(4)
+    return f"{ticker}{exchange.yahoo_suffix}"
+
+
+def from_yahoo(provider_symbol: str) -> CanonicalSymbol | None:
+    """Convert Yahoo/OpenBB-style symbols to registry canonical symbols."""
+
+    try:
+        symbol = _clean_symbol(provider_symbol, field_name="provider_symbol").upper()
+    except SymbolMappingError:
+        return None
+
+    for exchange in sorted(
+        REGISTRY.all_exchanges,
+        key=lambda item: len(item.yahoo_suffix),
+        reverse=True,
+    ):
+        suffix = exchange.yahoo_suffix
+        if suffix and symbol.endswith(suffix):
+            raw_ticker = symbol[: -len(suffix)]
+            if not raw_ticker:
+                return None
+            try:
+                ticker = _normalize_registry_ticker(raw_ticker, exchange.code)
+            except SymbolMappingError:
+                return None
+            return CanonicalSymbol(exchange.code, ticker, exchange.currency, exchange.mic, exchange.country)
+
+    if "." in symbol:
+        return None
+    exchange = REGISTRY.by_code("US")
+    if exchange is None:
+        return None
+    return CanonicalSymbol("US", symbol, exchange.currency, exchange.mic, exchange.country)
+
+
+def roundtrip_yahoo(canonical_symbol: str) -> str | None:
+    """Return canonical symbol after canonical → Yahoo → canonical conversion."""
+
+    yahoo_symbol = to_yahoo(canonical_symbol)
+    if yahoo_symbol is None:
+        return None
+    parsed = from_yahoo(yahoo_symbol)
+    if parsed is None:
+        return None
+    return str(parsed)
+
+
+def _normalize_registry_ticker(ticker: str, exchange_code: str) -> str:
+    cleaned = _clean_symbol(ticker, field_name="ticker").upper()
+    if ":" in cleaned:
+        raise SymbolMappingError(f"ticker {ticker!r} must not contain ':'")
+    if exchange_code == "HK" and cleaned.isdigit():
+        if len(cleaned) > 5:
+            raise SymbolMappingError("HK tickers must be at most 5 digits")
+        return cleaned.zfill(5)
     return cleaned
