@@ -15,33 +15,10 @@ from typing import Final
 class ExchangeRule:
     """Mapping rule between a canonical exchange code and provider suffix."""
 
-    exchange_code: str
-    local_ticker: str
-    exchange: ExchangeInfo
-
-    @property
-    def currency(self) -> str:
-        return self.exchange.currency
-
-    @property
-    def mic(self) -> str:
-        return self.exchange.mic
-
-    @property
-    def country(self) -> str:
-        return self.exchange.country
-
-    def to_yahoo(self) -> str:
-        """Convert to Yahoo Finance ticker format."""
-        suffix = self.exchange.yahoo_suffix
-        ticker = self.local_ticker
-        # Yahoo Finance uses 4-digit HK tickers: canonical 00700 → Yahoo 0700
-        if self.exchange.code == "HK":
-            ticker = str(int(ticker)).zfill(4)
-        return f"{ticker}{suffix}"
-
-    def __str__(self) -> str:
-        return f"{self.exchange_code}:{self.local_ticker}"
+    canonical_exchange: str
+    provider_suffix: str
+    aliases: tuple[str, ...] = ()
+    pad_width: int | None = None
 
 
 _RULES: Final[tuple[ExchangeRule, ...]] = (
