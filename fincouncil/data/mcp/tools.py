@@ -276,7 +276,9 @@ def reconcile(
         raise MCPToolError(f"Reconciliation failed for {symbol} {field} on {trade_date}") from exc
 
     # Persist result to reconcile_log table (both PASS and FLAG)
-    _persist_reconcile_result(reconcile_record, cache_manager._warehouse)
+    _wh = getattr(cache_manager, "_warehouse", None)
+    if _wh is not None:
+        _persist_reconcile_result(reconcile_record, _wh)
 
     return _record_to_dict(reconcile_record)
 
