@@ -1,164 +1,261 @@
-"""Canonical record schemas for the FinCouncil data layer.
+"""Canonical FinCouncil data-layer record contracts.
 
-All financial data flowing through the system MUST conform to one of these
-schemas.  No field may be absent — if a provider does not supply it, the
-normalizer fills ``None`` with a documented reason.
-
-Design reference: PHASE1_DATA_LAYER_SPRINT.md T1.1.
+The Phase 1 data layer intentionally starts with dependency-free runtime
+contracts so adapters, normalization, storage, reconcile, MCP, and the later
+TradingAgents shim can agree on field names before provider code exists.
+Every public record carries source, currency, and as_of for auditability.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Mapping, NewType, Sequence
+
+CurrencyCode = NewType("CurrencyCode", str)
+RecordKind = Literal["price", "fundamentals", "symbol", "reconcile_log"]
 
 
-# ---------------------------------------------------------------------------
-# Shared building blocks
-# ---------------------------------------------------------------------------
-
-class RecordType(str, Enum):
-    PRICE = "price"
-    FUNDAMENTALS = "fundamentals"
-    SYMBOL = "symbol"
-    RECONCILE_LOG = "reconcile_log"
+class ValidationError(ValueError):
+    """Raised when a canonical record violates the Phase 1 contract."""
 
 
-@dataclass(frozen=True)
-class SourceTag:
-    """Provenance tag attached to every canonical record."""
+class Period(str, Enum):
+    """Supported financial statement periods."""
 
-    provider: str          # e.g. "openbb", "yfinance", "alpha_vantage"
-    fetched_at: datetime   # when the adapter actually fetched the data
+    FY = "FY"
+    Q = "Q"
 
 
-@dataclass(frozen=True)
-class CanonicalRecord:
-    """Base record — every concrete record inherits from this.
+class ReconcileStatus(str, Enum):
+    """Reconcile outcome status."""
 
-    Invariants enforced by the normalizer:
-    - ``source`` is always present.
-    - ``currency`` is a 3-letter ISO-4217 code.
-    - ``as_of`` is the reference date (not the fetch timestamp).
+    PASS = "PASS"
+    FLAG = "FLAG"
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceStampedRecord:
+    """Common audit fields required on every canonical record."""
+
+    source: str
+    currency: CurrencyCode
+    as_of: date | datetime
+
+    def validate_common(self) -> None:
+        _require_non_empty("source", self.source)
+        _validate_currency(self.currency)
+        _validate_temporal("as_of", self.as_of)
+
+
+@dataclass(frozen=True, kw_only=True)
+class PriceRecord(SourceStampedRecord):
+    """Canonical end-of-day OHLCV price record.
+
+    Field units:
+    - open/high/low/close/adjusted_close: quoted in ``currency``.
+    - volume: provider-reported share/unit count for that trading date.
     """
 
-    record_type: RecordType
-    symbol: str            # canonical ``{exchange}:{ticker}``, e.g. "NYSE:AAPL"
-    source: SourceTag
-    currency: str          # ISO-4217, e.g. "USD", "JPY", "THB", "HKD"
-    as_of: date
+    kind: Literal["price"] = "price"
+    symbol: str
+    date: date
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+    adjusted_close: Decimal
+
+    def validate(self) -> None:
+        self.validate_common()
+        _require_non_empty("symbol", self.symbol)
+        _validate_temporal("date", self.date)
+        for field_name in ("open", "high", "low", "close", "adjusted_close"):
+            _validate_decimal(field_name, getattr(self, field_name), minimum=Decimal("0"))
+        if self.volume < 0:
+            raise ValidationError("volume must be non-negative")
+        if self.low > self.high:
+            raise ValidationError("low must be less than or equal to high")
+        for field_name in ("open", "close", "adjusted_close"):
+            value = getattr(self, field_name)
+            if value < self.low or value > self.high:
+                raise ValidationError(f"{field_name} must fall within low/high")
 
 
-# ---------------------------------------------------------------------------
-# Price record
-# ---------------------------------------------------------------------------
+@dataclass(frozen=True, kw_only=True)
+class FundamentalsRecord(SourceStampedRecord):
+    """Canonical financial statement and ratio record.
 
-@dataclass(frozen=True)
-class PriceRecord(CanonicalRecord):
-    """EOD (end-of-day) price bar.
-
-    All monetary values are in ``currency`` units.
-    ``adjusted_close`` accounts for splits and dividends; the normalizer
-    MUST document whether it uses the provider's adjustment or computes
-    its own (PHASE1 gotcha: adjusted vs raw close).
+    Statement values are quoted in ``currency`` unless the field name denotes a
+    per-share value or ratio. Optional fields allow market/provider differences,
+    but each record must contain at least one core statement value so downstream
+    valuation never treats an empty shell as real data.
     """
 
-    record_type: RecordType = field(default=RecordType.PRICE, init=False)
-    open: Optional[float] = None
-    high: Optional[float] = None
-    low: Optional[float] = None
-    close: Optional[float] = None
-    volume: Optional[int] = None
-    adjusted_close: Optional[float] = None
+    kind: Literal["fundamentals"] = "fundamentals"
+    symbol: str
+    period: Period
+    fiscal_date: date
+    revenue: Decimal | None = None
+    gross_profit: Decimal | None = None
+    operating_income: Decimal | None = None
+    net_income: Decimal | None = None
+    total_assets: Decimal | None = None
+    total_liabilities: Decimal | None = None
+    shareholders_equity: Decimal | None = None
+    operating_cash_flow: Decimal | None = None
+    capital_expenditure: Decimal | None = None
+    free_cash_flow: Decimal | None = None
+    eps: Decimal | None = None
+    pe_ratio: Decimal | None = None
+    pb_ratio: Decimal | None = None
+    roe: Decimal | None = None
+    debt_to_equity: Decimal | None = None
+
+    def validate(self) -> None:
+        self.validate_common()
+        _require_non_empty("symbol", self.symbol)
+        if not isinstance(self.period, Period):
+            raise ValidationError("period must be Period.FY or Period.Q")
+        _validate_temporal("fiscal_date", self.fiscal_date)
+        populated_statement_fields = 0
+        for field_name in _FUNDAMENTAL_DECIMAL_FIELDS:
+            value = getattr(self, field_name)
+            if value is not None:
+                _validate_decimal(field_name, value)
+                if field_name in _CORE_STATEMENT_FIELDS:
+                    populated_statement_fields += 1
+        if populated_statement_fields == 0:
+            raise ValidationError("fundamentals must include at least one core statement value")
 
 
-# ---------------------------------------------------------------------------
-# Fundamentals record
-# ---------------------------------------------------------------------------
+@dataclass(frozen=True, kw_only=True)
+class SymbolRecord(SourceStampedRecord):
+    """Canonical instrument identity and provider mapping record."""
 
-class FiscalPeriod(str, Enum):
-    FY = "FY"   # full year
-    Q1 = "Q1"
-    Q2 = "Q2"
-    Q3 = "Q3"
-    Q4 = "Q4"
+    kind: Literal["symbol"] = "symbol"
+    symbol: str
+    exchange: str
+    ticker: str
+    provider_symbols: Mapping[str, str]
+    name: str | None = None
+    country: str | None = None
+    asset_type: str = "equity"
 
-
-@dataclass(frozen=True)
-class FundamentalsRecord(CanonicalRecord):
-    """Fundamental financial data for one period.
-
-    ``line_items`` is a flat dict of named values (e.g.
-    ``{"revenue": 1_000_000, "net_income": 200_000, ...}``).
-    ``ratios`` holds computed ratios (PE, ROE, etc.).
-    All monetary values are in ``currency`` units.
-    """
-
-    record_type: RecordType = field(default=RecordType.FUNDAMENTALS, init=False)
-    period: FiscalPeriod = FiscalPeriod.FY
-    fiscal_date: Optional[date] = None
-    line_items: dict[str, Any] = field(default_factory=dict)
-    ratios: dict[str, Any] = field(default_factory=dict)
+    def validate(self) -> None:
+        self.validate_common()
+        _require_non_empty("symbol", self.symbol)
+        _require_non_empty("exchange", self.exchange)
+        _require_non_empty("ticker", self.ticker)
+        if ":" not in self.symbol:
+            raise ValidationError("symbol must use {exchange}:{ticker} convention")
+        if not self.provider_symbols:
+            raise ValidationError("provider_symbols must include at least one provider mapping")
+        for provider, provider_symbol in self.provider_symbols.items():
+            _require_non_empty("provider", provider)
+            _require_non_empty(f"provider_symbols[{provider}]", provider_symbol)
 
 
-# ---------------------------------------------------------------------------
-# Symbol mapping record
-# ---------------------------------------------------------------------------
+@dataclass(frozen=True, kw_only=True)
+class ReconcileLogRecord(SourceStampedRecord):
+    """Canonical audit log for cross-source value comparison."""
 
-@dataclass(frozen=True)
-class SymbolRecord(CanonicalRecord):
-    """Mapping between canonical symbol and provider-specific ticker.
-
-    ``provider_ticker`` is what you pass to the provider API
-    (e.g. ``"7011.T"`` for Yahoo/OpenBB Japan, ``"PTT.BK"`` for Thai).
-    """
-
-    record_type: RecordType = field(default=RecordType.SYMBOL, init=False)
-    exchange: str               # e.g. "NYSE", "SET", "TSE", "HKEX", "SSE"
-    provider_ticker: str        # e.g. "AAPL", "7011.T", "PTT.BK", "00700.HK"
-    security_name: str = ""
-    asset_type: str = ""        # "equity", "etf", "adr", ...
-
-
-# ---------------------------------------------------------------------------
-# Reconcile log record
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class ReconcileResult:
-    """Output of a single reconcile comparison.
-
-    ``flagged`` is True when the percentage diff exceeds the threshold.
-    ``explanation`` documents *why* the diff occurred (or why it is
-    acceptable, e.g. "adjusted_close vs raw close").
-    """
-
+    kind: Literal["reconcile_log"] = "reconcile_log"
     symbol: str
     field: str
-    as_of: date
-    currency: str
-    values: dict[str, float]        # provider -> value
-    diff_pct: Optional[float]       # |max - min| / mean * 100
-    flagged: bool
-    explanation: str = ""
+    date: date
+    values: Mapping[str, Decimal]
+    diff_pct: Decimal
+    threshold_pct: Decimal
+    status: ReconcileStatus
+    explanation: str
+
+    def validate(self) -> None:
+        self.validate_common()
+        _require_non_empty("symbol", self.symbol)
+        _require_non_empty("field", self.field)
+        _validate_temporal("date", self.date)
+        if len(self.values) < 2:
+            raise ValidationError("reconcile values must include at least two sources")
+        for source, value in self.values.items():
+            _require_non_empty("values source", source)
+            _validate_decimal(f"values[{source}]", value)
+        _validate_decimal("diff_pct", self.diff_pct, minimum=Decimal("0"))
+        _validate_decimal("threshold_pct", self.threshold_pct, minimum=Decimal("0"))
+        if not isinstance(self.status, ReconcileStatus):
+            raise ValidationError("status must be ReconcileStatus.PASS or ReconcileStatus.FLAG")
+        _require_non_empty("explanation", self.explanation)
 
 
-@dataclass(frozen=True)
-class ReconcileLog(CanonicalRecord):
-    """Persisted reconcile comparison record (stored in DuckDB).
+CanonicalRecord = PriceRecord | FundamentalsRecord | SymbolRecord | ReconcileLogRecord
 
-    ``results`` contains one entry per provider pair comparison.
-    """
+_CORE_STATEMENT_FIELDS = frozenset(
+    {
+        "revenue",
+        "gross_profit",
+        "operating_income",
+        "net_income",
+        "total_assets",
+        "total_liabilities",
+        "shareholders_equity",
+        "operating_cash_flow",
+        "capital_expenditure",
+        "free_cash_flow",
+    }
+)
+_FUNDAMENTAL_DECIMAL_FIELDS = tuple(
+    sorted(
+        _CORE_STATEMENT_FIELDS
+        | {"eps", "pe_ratio", "pb_ratio", "roe", "debt_to_equity"}
+    )
+)
 
-    record_type: RecordType = field(default=RecordType.RECONCILE_LOG, init=False)
-    results: list[ReconcileResult] = field(default_factory=list)
+
+def validate_record(record: CanonicalRecord) -> None:
+    """Validate any canonical FinCouncil data-layer record."""
+
+    if not isinstance(
+        record, (PriceRecord, FundamentalsRecord, SymbolRecord, ReconcileLogRecord)
+    ):
+        raise ValidationError(f"unsupported canonical record type: {type(record)!r}")
+    record.validate()
 
 
-# ---------------------------------------------------------------------------
-# Reconcile thresholds (from DATA_SOURCES.md)
-# ---------------------------------------------------------------------------
+def validate_records(records: Sequence[CanonicalRecord]) -> None:
+    """Validate a batch of canonical records."""
 
-RECONCILE_THRESHOLD_PRICE_PCT = 0.5   # EOD price: 0.5%
-RECONCILE_THRESHOLD_FUNDAMENTALS_PCT = 1.0  # Fundamentals: 1%
+    for record in records:
+        validate_record(record)
+
+
+def _require_non_empty(field_name: str, value: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError(f"{field_name} must be a non-empty string")
+
+
+def _validate_currency(currency: CurrencyCode) -> None:
+    value = str(currency)
+    if len(value) != 3 or not value.isalpha() or value.upper() != value:
+        raise ValidationError("currency must be an uppercase ISO-4217 code")
+
+
+def _validate_temporal(field_name: str, value: date | datetime) -> None:
+    if not isinstance(value, (date, datetime)):
+        raise ValidationError(f"{field_name} must be a date or datetime")
+
+
+def _validate_decimal(
+    field_name: str,
+    value: Any,
+    *,
+    minimum: Decimal | None = None,
+) -> None:
+    if not isinstance(value, Decimal):
+        raise ValidationError(f"{field_name} must be Decimal")
+    if not value.is_finite():
+        raise ValidationError(f"{field_name} must be finite")
+    if minimum is not None and value < minimum:
+        raise ValidationError(f"{field_name} must be >= {minimum}")

@@ -1,1 +1,1 @@
-"""FinCouncil application package."""
+"""FinCouncil fork-extension package."""
