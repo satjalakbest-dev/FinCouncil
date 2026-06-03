@@ -247,12 +247,15 @@ class TestGetStockData:
 class TestGetFundamentals:
     """Tests for get_fundamentals."""
 
-    def test_returns_placeholder_for_phase1(self):
-        """Test that fundamentals returns placeholder in Phase 1."""
+    def test_returns_real_fundamentals_data(self):
+        """Test that fundamentals returns real data through YFinanceAdapter."""
         result = get_fundamentals("AAPL")
 
-        assert "# Company Fundamentals for US:AAPL" in result
-        assert "NOTE: Fundamentals through FinCouncil layer not fully implemented" in result
+        assert "# Company Fundamentals" in result
+        assert "# Source:" in result
+        assert "# Currency:" in result
+        # Should NOT contain placeholder text anymore
+        assert "not fully implemented" not in result
 
     def test_includes_exchange_info(self):
         result = get_fundamentals("PTT.BK")
@@ -262,28 +265,34 @@ class TestGetFundamentals:
 class TestGetBalanceSheet:
     """Tests for get_balance_sheet."""
 
-    def test_returns_placeholder_for_phase1(self):
+    def test_returns_real_balance_sheet_data(self):
         result = get_balance_sheet("AAPL")
-        assert "# Balance Sheet data for US:AAPL" in result
-        assert "NOTE: Balance sheet through FinCouncil layer not fully implemented" in result
+        assert "# Balance Sheet data" in result
+        assert "# Source:" in result
+        assert "# Currency:" in result
+        assert "not fully implemented" not in result
 
 
 class TestGetCashflow:
     """Tests for get_cashflow."""
 
-    def test_returns_placeholder_for_phase1(self):
+    def test_returns_real_cashflow_data(self):
         result = get_cashflow("AAPL")
-        assert "# Cash Flow data for US:AAPL" in result
-        assert "NOTE: Cash flow through FinCouncil layer not fully implemented" in result
+        assert "# Cash Flow data" in result
+        assert "# Source:" in result
+        assert "# Currency:" in result
+        assert "not fully implemented" not in result
 
 
 class TestGetIncomeStatement:
     """Tests for get_income_statement."""
 
-    def test_returns_placeholder_for_phase1(self):
+    def test_returns_real_income_statement_data(self):
         result = get_income_statement("AAPL")
-        assert "# Income Statement data for US:AAPL" in result
-        assert "NOTE: Income statement through FinCouncil layer not fully implemented" in result
+        assert "# Income Statement data" in result
+        assert "# Source:" in result
+        assert "# Currency:" in result
+        assert "not fully implemented" not in result
 
 
 class TestGetNews:

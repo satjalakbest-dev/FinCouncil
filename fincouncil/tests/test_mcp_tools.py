@@ -201,9 +201,14 @@ class TestGetPrice:
 class TestGetFundamentals:
     """Tests for get_fundamentals tool."""
 
-    def test_get_fundamentals_raises_not_implemented(self):
-        with pytest.raises(DataNotAvailableError, match="Fundamentals adapter not available"):
-            get_fundamentals(symbol="US:AAPL")
+    def test_get_fundamentals_returns_data(self):
+        result = get_fundamentals(symbol="US:AAPL")
+        assert isinstance(result, list)
+        assert len(result) > 0
+        # Each record should have source metadata
+        for record in result:
+            assert "source" in record
+            assert "endpoint" in record
 
     def test_get_fundamentals_invalid_symbol_raises(self):
         with pytest.raises(InvalidParameterError, match="symbol must not be empty"):

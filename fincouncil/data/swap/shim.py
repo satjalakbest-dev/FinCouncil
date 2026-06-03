@@ -14,8 +14,9 @@ from decimal import Decimal
 from io import StringIO
 from typing import Annotated
 
+from fincouncil.data.adapters.yfinance import YFinanceAdapter
 from fincouncil.data.cache.manager import CacheManager
-from fincouncil.data.mcp.tools import DataNotAvailableError, InvalidParameterError, get_price
+from fincouncil.data.mcp.tools import DataNotAvailableError, InvalidParameterError, get_fundamentals as mcp_get_fundamentals, get_price
 from fincouncil.data.schema import CurrencyCode
 from fincouncil.data.store.warehouse import DuckDBWarehouse
 
@@ -74,8 +75,7 @@ def get_fundamentals(
 ) -> str:
     """Get company fundamentals overview.
 
-    Phase 1 note: Fundamentals through FinCouncil layer is limited.
-    This is a placeholder that returns available fields.
+    Fetches fundamentals via FinCouncil MCP tool and formats as CSV.
 
     Args:
         ticker: Ticker symbol
@@ -85,17 +85,18 @@ def get_fundamentals(
         String with fundamental data in TradingAgents format
     """
     canonical = _normalize_to_canonical(ticker)
+    currency = _detect_currency(canonical)
 
-    # Phase 1: Return a placeholder indicating fundamentals not fully available
-    # In future phases, this would call MCP get_fundamentals
-    return f"# Company Fundamentals for {canonical}\n" \
-           f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n" \
-           f"#\n" \
-           f"# NOTE: Fundamentals through FinCouncil layer not fully implemented in Phase 1.\n" \
-           f"# Please use yfinance or alpha_vantage vendor for fundamentals.\n" \
-           f"#\n" \
-           f"Name: {canonical}\n" \
-           f"Exchange: {_extract_exchange(canonical)}\n"
+    # Fetch from FinCouncil data layer
+    try:
+        records = mcp_get_fundamentals(symbol=canonical, period="FY")
+    except (DataNotAvailableError, InvalidParameterError, Exception):
+        return _format_no_data(ticker, canonical)
+
+    if not records:
+        return _format_no_data(ticker, canonical)
+
+    return _format_fundamentals_csv(records, ticker, canonical, currency)
 
 
 def get_balance_sheet(
@@ -105,7 +106,7 @@ def get_balance_sheet(
 ) -> str:
     """Get balance sheet data.
 
-    Phase 1: Returns placeholder indicating limited availability.
+    Fetches balance sheet via YFinanceAdapter and formats as CSV.
 
     Args:
         ticker: Ticker symbol
@@ -116,11 +117,21 @@ def get_balance_sheet(
         String with balance sheet data or placeholder
     """
     canonical = _normalize_to_canonical(ticker)
-    return f"# Balance Sheet data for {canonical} ({freq})\n" \
-           f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n" \
-           f"#\n" \
-           f"# NOTE: Balance sheet through FinCouncil layer not fully implemented in Phase 1.\n" \
-           f"# Please use yfinance or alpha_vantage vendor for balance sheet data.\n"
+    currency = _detect_currency(canonical)
+
+    # Fetch from YFinanceAdapter (filter for balance_sheet endpoint)
+    try:
+        adapter = YFinanceAdapter()
+        all_records = adapter.get_fundamentals(symbol=canonical, period="FY")
+        # Filter for balance_sheet endpoint only
+        records = [r for r in all_records if r.get("endpoint") == "balance_sheet"]
+    except Exception:
+        return _format_no_data(ticker, canonical)
+
+    if not records:
+        return _format_no_data(ticker, canonical)
+
+    return _format_statement_csv(records, ticker, canonical, currency, "Balance Sheet", freq)
 
 
 def get_cashflow(
@@ -130,7 +141,7 @@ def get_cashflow(
 ) -> str:
     """Get cash flow data.
 
-    Phase 1: Returns placeholder indicating limited availability.
+    Fetches cash flow via YFinanceAdapter and formats as CSV.
 
     Args:
         ticker: Ticker symbol
@@ -141,11 +152,21 @@ def get_cashflow(
         String with cash flow data or placeholder
     """
     canonical = _normalize_to_canonical(ticker)
-    return f"# Cash Flow data for {canonical} ({freq})\n" \
-           f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n" \
-           f"#\n" \
-           f"# NOTE: Cash flow through FinCouncil layer not fully implemented in Phase 1.\n" \
-           f"# Please use yfinance or alpha_vantage vendor for cash flow data.\n"
+    currency = _detect_currency(canonical)
+
+    # Fetch from YFinanceAdapter (filter for cashflow endpoint)
+    try:
+        adapter = YFinanceAdapter()
+        all_records = adapter.get_fundamentals(symbol=canonical, period="FY")
+        # Filter for cashflow endpoint only
+        records = [r for r in all_records if r.get("endpoint") == "cashflow"]
+    except Exception:
+        return _format_no_data(ticker, canonical)
+
+    if not records:
+        return _format_no_data(ticker, canonical)
+
+    return _format_statement_csv(records, ticker, canonical, currency, "Cash Flow", freq)
 
 
 def get_income_statement(
@@ -155,7 +176,7 @@ def get_income_statement(
 ) -> str:
     """Get income statement data.
 
-    Phase 1: Returns placeholder indicating limited availability.
+    Fetches income statement via YFinanceAdapter and formats as CSV.
 
     Args:
         ticker: Ticker symbol
@@ -166,11 +187,21 @@ def get_income_statement(
         String with income statement data or placeholder
     """
     canonical = _normalize_to_canonical(ticker)
-    return f"# Income Statement data for {canonical} ({freq})\n" \
-           f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n" \
-           f"#\n" \
-           f"# NOTE: Income statement through FinCouncil layer not fully implemented in Phase 1.\n" \
-           f"# Please use yfinance or alpha_vantage vendor for income statement data.\n"
+    currency = _detect_currency(canonical)
+
+    # Fetch from YFinanceAdapter (filter for financials endpoint)
+    try:
+        adapter = YFinanceAdapter()
+        all_records = adapter.get_fundamentals(symbol=canonical, period="FY")
+        # Filter for financials endpoint only
+        records = [r for r in all_records if r.get("endpoint") == "financials"]
+    except Exception:
+        return _format_no_data(ticker, canonical)
+
+    if not records:
+        return _format_no_data(ticker, canonical)
+
+    return _format_statement_csv(records, ticker, canonical, currency, "Income Statement", freq)
 
 
 def get_news(
@@ -420,3 +451,125 @@ def _format_no_data(original_symbol: str, canonical: str) -> str:
         f"FinCouncil data layer. The symbol may be invalid, delisted, or not covered. "
         f"Do not estimate or fabricate values — report that data is unavailable for this symbol."
     )
+
+
+def _format_fundamentals_csv(
+    records: list[dict[str, any]],
+    original_symbol: str,
+    canonical: str,
+    currency: str,
+) -> str:
+    """Format fundamentals records to TradingAgents CSV format.
+
+    Args:
+        records: List of fundamentals record dicts
+        original_symbol: Original symbol requested
+        canonical: Canonical symbol resolved
+        currency: ISO currency code
+
+    Returns:
+        CSV string with header in TradingAgents format
+    """
+    if not records:
+        return _format_no_data(original_symbol, canonical)
+
+    # Build CSV
+    output = StringIO()
+    output.write(f"# Company Fundamentals for {original_symbol}\n")
+    output.write(f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    output.write(f"# Total records: {len(records)}\n")
+    output.write(f"# Source: {records[0].get('source', 'yfinance:yfinance')}\n")
+    output.write(f"# Currency: {currency}\n")
+    output.write(f"# Exchange: {_extract_exchange(canonical)}\n\n")
+
+    # Process records - separate info (metrics) from statement records
+    info_records = [r for r in records if r.get("endpoint") == "info"]
+    statement_records = [r for r in records if r.get("endpoint") != "info"]
+
+    # Output info metrics first if available
+    if info_records:
+        info = info_records[0]
+        output.write("# Key Metrics\n")
+        # Output selected key metrics
+        key_fields = [
+            "marketCap", "forwardPE", "trailingPE", "dividendYield",
+            "beta", "sharesOutstanding", "bookValue", "profitMargins",
+            "enterpriseToEbitda", "52WeekChange", "sector", "industry"
+        ]
+        for field in key_fields:
+            if field in info:
+                output.write(f"{field}: {_decimal_to_str(info[field])}\n")
+        output.write("\n")
+
+    # Output statement records summary
+    if statement_records:
+        output.write(f"# Financial Statements Available: {len(statement_records)} records\n")
+        for record in statement_records[:5]:  # Show first 5
+            endpoint = record.get("endpoint", "unknown")
+            period = record.get("period", "N/A")
+            output.write(f"#   - {endpoint}: {period}\n")
+        if len(statement_records) > 5:
+            output.write(f"#   ... and {len(statement_records) - 5} more\n")
+
+    return output.getvalue()
+
+
+def _format_statement_csv(
+    records: list[dict[str, any]],
+    original_symbol: str,
+    canonical: str,
+    currency: str,
+    statement_type: str,
+    freq: str,
+) -> str:
+    """Format financial statement records to TradingAgents CSV format.
+
+    Args:
+        records: List of statement record dicts (filtered by endpoint)
+        original_symbol: Original symbol requested
+        canonical: Canonical symbol resolved
+        currency: ISO currency code
+        statement_type: Type of statement (e.g., "Balance Sheet", "Cash Flow")
+        freq: Frequency (annual or quarterly)
+
+    Returns:
+        CSV string with header in TradingAgents format
+    """
+    if not records:
+        return _format_no_data(original_symbol, canonical)
+
+    # Build CSV
+    output = StringIO()
+    output.write(f"# {statement_type} data for {original_symbol} ({freq})\n")
+    output.write(f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    output.write(f"# Total records: {len(records)}\n")
+    output.write(f"# Source: {records[0].get('source', 'yfinance:yfinance')}\n")
+    output.write(f"# Currency: {currency}\n")
+    output.write(f"# Exchange: {_extract_exchange(canonical)}\n\n")
+
+    # Collect all unique field names across all records
+    all_fields = set()
+    for record in records:
+        # Skip metadata fields
+        for key in record.keys():
+            if key not in {"endpoint", "symbol", "period", "source", "provider",
+                          "provider_backend", "provider_symbol", "provider_call"}:
+                all_fields.add(key)
+
+    # Sort fields for consistent output
+    sorted_fields = sorted(all_fields)
+
+    # Write CSV header
+    output.write(f"Period,{','.join(sorted_fields)}\n")
+
+    # Write data rows - sort by period (most recent first)
+    sorted_records = sorted(records, key=lambda r: str(r.get("period", "")), reverse=True)
+    for record in sorted_records:
+        period = record.get("period", "N/A")
+        row_values = []
+        for field in sorted_fields:
+            val = record.get(field)
+            row_values.append(_decimal_to_str(val))
+        output.write(f"{period},{','.join(row_values)}\n")
+
+    return output.getvalue()

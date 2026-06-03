@@ -115,7 +115,7 @@ def get_fundamentals(
     Args:
         symbol: Canonical symbol (e.g., "US:AAPL").
         period: Financial statement period ("FY" or "Q", default: "FY").
-        adapter: Optional data adapter. If None, uses OpenBB.
+        adapter: Optional data adapter. If None, uses yfinance.
 
     Returns:
         List of canonical FundamentalsRecord dicts.
@@ -128,10 +128,9 @@ def get_fundamentals(
     _validate_symbol(symbol)
     _validate_period(period)
 
-    # Phase 1: fundamentals not fully implemented
-    # Use OpenBB adapter if available
+    # Use yfinance adapter as default (has real fundamentals implementation)
     if adapter is None:
-        adapter = OpenBBAdapter()
+        adapter = YFinanceAdapter()
 
     if not adapter.is_available():
         raise DataNotAvailableError(f"Fundamentals adapter not available for {symbol}")
