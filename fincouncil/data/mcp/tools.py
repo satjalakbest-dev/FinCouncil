@@ -264,7 +264,7 @@ def reconcile(
 
     # Perform reconciliation
     try:
-        reconcile_log = reconcile_engine.reconcile(
+        reconcile_record = reconcile_engine.reconcile(
             symbol=symbol,
             field=field,
             as_of=date_obj,
@@ -272,9 +272,13 @@ def reconcile(
             values_by_source=values_by_source,
             record_kind="price",
         )
-        return _record_to_dict(reconcile_log)
     except Exception as exc:
         raise MCPToolError(f"Reconciliation failed for {symbol} {field} on {trade_date}") from exc
+
+    # Persist result to reconcile_log table (both PASS and FLAG)
+    _persist_reconcile_result(reconcile_record, cache_manager._warehouse)
+
+    return _record_to_dict(reconcile_record)
 
 
 def _validate_dates(start_date: str, end_date: str) -> None:
@@ -332,3 +336,27 @@ def _record_to_dict(record: Any) -> dict[str, Any]:
 
         return asdict(record)
     return dict(record)
+
+
+def _persist_reconcile_result(record: Any, warehouse: Any) -> None:
+    """Persist a ReconcileLogRecord to the warehouse reconcile_log table.
+
+    Writes both PASS and FLAG results so the log is a complete audit trail.
+    Failures to persist are logged but do not block the reconcile response.
+    """
+    import uuid
+    from datetime import datetime
+
+    try:
+        row = {
+            "run_id": str(uuid.uuid4()),
+            "symbol": record.symbol,
+            "source": record.source,
+            "status": str(record.status.value) if hasattr(record.status, "value") else str(record.status),
+            "message": record.explanation,
+            "created_at": datetime.now().isoformat(),
+        }
+        warehouse.upsert_reconcile_log([row])
+    except Exception:
+        # Persistence failure must not block reconcile response
+        pass

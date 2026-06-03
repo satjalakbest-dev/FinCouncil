@@ -143,6 +143,46 @@ class DuckDBWarehouse:
             self._connection.unregister("price_rows")
         return len(frame)
 
+    def upsert_reconcile_log(
+        self,
+        rows: Iterable[Mapping[str, Any]] | pd.DataFrame,
+    ) -> int:
+        """Insert reconcile log rows into the ``reconcile_log`` table.
+
+        Each row must contain at least: ``run_id``, ``symbol``, ``source``,
+        ``status``, ``message``.  ``created_at`` defaults to
+        ``current_timestamp`` if not supplied.
+
+        Returns the number of rows inserted.
+        """
+        frame = (
+            rows.copy() if isinstance(rows, pd.DataFrame) else pd.DataFrame(list(rows))
+        )
+        if frame.empty:
+            return 0
+
+        # Ensure required columns exist
+        for col in ("run_id", "symbol", "source", "status"):
+            if col not in frame.columns:
+                raise ValueError(f"reconcile_log rows missing required column: {col}")
+
+        # Add created_at if not present (use current timestamp)
+        if "created_at" not in frame.columns:
+            from datetime import datetime
+            frame["created_at"] = datetime.now()
+
+        self._connection.register("reconcile_rows", frame)
+        try:
+            self._connection.execute(
+                """
+                INSERT INTO reconcile_log BY NAME
+                SELECT * FROM reconcile_rows
+                """
+            )
+        finally:
+            self._connection.unregister("reconcile_rows")
+        return len(frame)
+
     def query_prices(
         self,
         symbol: str,

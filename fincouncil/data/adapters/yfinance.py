@@ -148,6 +148,8 @@ class YFinanceAdapter(BaseAdapter):
         row["provider_backend"] = "yfinance"
         row["provider_symbol"] = provider_symbol
         row["provider_call"] = call
+        # Attach currency based on symbol's exchange
+        row["currency"] = _currency_for_symbol(row.get("symbol", ""))
         return row
 
     def _get_client(self) -> Any:
@@ -179,6 +181,17 @@ _YAHOO_SUFFIX_BY_EXCHANGE = {
     "SZ": ".SZ",
     "SZSE": ".SZ",
 }
+
+
+def _currency_for_symbol(symbol: str) -> str:
+    """Return ISO currency code for a canonical symbol using the exchange registry."""
+    from fincouncil.data.symbols.exchange import REGISTRY
+
+    if not symbol or ":" not in symbol:
+        return "USD"
+    exchange = symbol.split(":")[0].upper()
+    info = REGISTRY.resolve(exchange)
+    return info.currency if info else "USD"
 
 
 def _to_provider_symbol(symbol: str) -> str:

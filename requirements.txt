@@ -1,0 +1,12 @@
+# FinCouncil Data Layer — Phase 1 dependencies
+# Core data
+pandas>=2.0
+duckdb>=0.9
+pydantic>=2.0
+
+# Data providers (free-first)
+yfinance>=0.2.31
+
+# Testing
+pytest>=7.0
+pytest-cov>=4.0

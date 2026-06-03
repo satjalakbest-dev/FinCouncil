@@ -18,8 +18,9 @@ venv/
 # Local data warehouse / caches
 fincouncil/data/store/*
 !fincouncil/data/store/.gitkeep
-fincouncil/data/cache/*
-!fincouncil/data/cache/.gitkeep
+!fincouncil/data/store/*.py
+fincouncil/data/cache/*.duckdb
+fincouncil/data/cache/*.parquet
 *.duckdb
 *.duckdb.wal
 *.parquet

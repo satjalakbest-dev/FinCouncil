@@ -28,6 +28,19 @@ from .symbol_utils import NoMarketDataError
 # Configuration and routing logic
 from .config import get_config
 
+# FinCouncil data layer shim — swap-in vendor
+from fincouncil.data.swap.shim import (
+    get_stock_data as fc_get_stock_data,
+    get_fundamentals as fc_get_fundamentals,
+    get_balance_sheet as fc_get_balance_sheet,
+    get_cashflow as fc_get_cashflow,
+    get_income_statement as fc_get_income_statement,
+    get_news as fc_get_news,
+    get_global_news as fc_get_global_news,
+    get_insider_transactions as fc_get_insider_transactions,
+    get_stock_stats_indicators_window as fc_get_indicators,
+)
+
 # Tools organized by category
 TOOLS_CATEGORIES = {
     "core_stock_apis": {
@@ -64,6 +77,7 @@ TOOLS_CATEGORIES = {
 VENDOR_LIST = [
     "yfinance",
     "alpha_vantage",
+    "fincouncil",
 ]
 
 # Mapping of methods to their vendor-specific implementations
@@ -72,41 +86,50 @@ VENDOR_METHODS = {
     "get_stock_data": {
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
+        "fincouncil": fc_get_stock_data,
     },
     # technical_indicators
     "get_indicators": {
         "alpha_vantage": get_alpha_vantage_indicator,
         "yfinance": get_stock_stats_indicators_window,
+        "fincouncil": fc_get_indicators,
     },
     # fundamental_data
     "get_fundamentals": {
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "yfinance": get_yfinance_fundamentals,
+        "fincouncil": fc_get_fundamentals,
     },
     "get_balance_sheet": {
         "alpha_vantage": get_alpha_vantage_balance_sheet,
         "yfinance": get_yfinance_balance_sheet,
+        "fincouncil": fc_get_balance_sheet,
     },
     "get_cashflow": {
         "alpha_vantage": get_alpha_vantage_cashflow,
         "yfinance": get_yfinance_cashflow,
+        "fincouncil": fc_get_cashflow,
     },
     "get_income_statement": {
         "alpha_vantage": get_alpha_vantage_income_statement,
         "yfinance": get_yfinance_income_statement,
+        "fincouncil": fc_get_income_statement,
     },
     # news_data
     "get_news": {
         "alpha_vantage": get_alpha_vantage_news,
         "yfinance": get_news_yfinance,
+        "fincouncil": fc_get_news,
     },
     "get_global_news": {
         "yfinance": get_global_news_yfinance,
         "alpha_vantage": get_alpha_vantage_global_news,
+        "fincouncil": fc_get_global_news,
     },
     "get_insider_transactions": {
         "alpha_vantage": get_alpha_vantage_insider_transactions,
         "yfinance": get_yfinance_insider_transactions,
+        "fincouncil": fc_get_insider_transactions,
     },
 }
 
