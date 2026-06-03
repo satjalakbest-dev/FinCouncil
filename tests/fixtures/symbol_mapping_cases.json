@@ -1,0 +1,8 @@
+[
+  {"canonical": "US:AAPL", "provider": "AAPL"},
+  {"canonical": "TSE:7011", "provider": "7011.T"},
+  {"canonical": "SET:PTT", "provider": "PTT.BK"},
+  {"canonical": "HKEX:00700", "provider": "00700.HK"},
+  {"canonical": "SSE:600519", "provider": "600519.SS"},
+  {"canonical": "SZSE:000001", "provider": "000001.SZ"}
+]
