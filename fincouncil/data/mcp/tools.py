@@ -67,9 +67,9 @@ def get_price(
     start = date.fromisoformat(start_date)
     end = date.fromisoformat(end_date)
 
-    # If no source specified, use OpenBB as default
+    # If no source specified, use yfinance as default
     if source is None:
-        source = "openbb:yfinance"
+        source = "yfinance:yfinance"
 
     # Setup cache manager if not provided
     if cache_manager is None:
@@ -81,8 +81,8 @@ def get_price(
             warehouse = DuckDBWarehouse(str(warehouse))
         cache_manager = CacheManager(warehouse)
 
-    # Use OpenBB adapter as default
-    adapter = OpenBBAdapter()
+    # Use YFinance adapter as default (OpenBB optional)
+    adapter = YFinanceAdapter()
 
     # Fetch prices via cache manager
     try:
@@ -230,8 +230,8 @@ def reconcile(
     if reconcile_engine is None:
         reconcile_engine = ReconcileEngine()
 
-    # Fetch from both sources
-    adapters = [("openbb", OpenBBAdapter()), ("yfinance", YFinanceAdapter())]
+    # Fetch from both sources (OpenBB optional, YFinance required)
+    adapters = [("yfinance", YFinanceAdapter()), ("openbb", OpenBBAdapter())]
     values_by_source: dict[str, Decimal] = {}
 
     for source_name, adapter in adapters:

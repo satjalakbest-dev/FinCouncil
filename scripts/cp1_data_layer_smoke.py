@@ -25,7 +25,6 @@ if str(project_root) not in sys.path:
 
 # Load .env
 from dotenv import load_dotenv
-project_root = Path(__file__).resolve().parent.parent
 load_dotenv(project_root / ".env")
 
 # Setup logging to capture FinCouncil data layer calls

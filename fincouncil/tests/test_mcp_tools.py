@@ -167,7 +167,7 @@ class TestGetPrice:
         assert len(result) == 1
         assert result[0]["symbol"] == "US:AAPL"
         assert result[0]["close"] == Decimal("104.0")
-        assert result[0]["source"] == "openbb:yfinance"
+        assert result[0]["source"] == "yfinance:yfinance"
 
     def test_get_price_without_cache_manager_requires_warehouse(self):
         with pytest.raises(InvalidParameterError, match="warehouse is required"):
