@@ -28,3 +28,6 @@ fincouncil/data/cache/*
 .DS_Store
 .idea/
 .vscode/
+
+# Local agent/runtime state
+.omc/
