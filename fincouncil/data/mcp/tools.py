@@ -361,4 +361,9 @@ def _persist_reconcile_result(record: Any, warehouse: Any) -> None:
         warehouse.upsert_reconcile_log([row])
     except Exception:
         # Persistence failure must not block reconcile response
-        pass
+        import logging
+        logging.getLogger(__name__).warning(
+            "Failed to persist reconcile result for %s: %s",
+            getattr(record, "symbol", "?"),
+            exc_info=True,
+        )

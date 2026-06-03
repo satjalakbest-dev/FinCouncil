@@ -233,11 +233,15 @@ class TestInvalidSymbolHandling:
             adapter.get_price("LON:BARC", date(2024, 1, 1), date(2024, 1, 31))
 
 
+@pytest.mark.live
 class TestYFinanceAdapterIntegration:
     """Integration tests for yfinance adapter with mock data resembling real responses.
 
     These tests verify the adapter returns valid data structure for sample tickers
     across US, TH, and HK markets (CP1 requirement T1.9).
+
+    Marked ``@pytest.mark.live`` — auto-skipped when no provider credentials
+    are present (see conftest.py ``pytest_collection_modifyitems``).
     """
 
     def test_us_ticker_returns_valid_data(self):

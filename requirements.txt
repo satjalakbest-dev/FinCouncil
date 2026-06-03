@@ -7,6 +7,9 @@ pydantic>=2.0
 # Data providers (free-first)
 yfinance>=0.2.31
 
+# Vendored TradingAgents dependencies
+stockstats>=0.6.0
+
 # Testing
 pytest>=7.0
 pytest-cov>=4.0

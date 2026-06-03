@@ -99,10 +99,10 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # Data vendor configuration
     # Category-level configuration (default for all tools in category)
     "data_vendors": {
-        "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance
-        "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
-        "fundamental_data": "yfinance",      # Options: alpha_vantage, yfinance
-        "news_data": "yfinance",             # Options: alpha_vantage, yfinance
+        "core_stock_apis": "fincouncil",       # FinCouncil data layer (reconciled, multi-market)
+        "technical_indicators": "fincouncil",  # FinCouncil data layer
+        "fundamental_data": "fincouncil",      # FinCouncil data layer
+        "news_data": "fincouncil",             # FinCouncil data layer
     },
     # Tool-level configuration (takes precedence over category-level)
     "tool_vendors": {
