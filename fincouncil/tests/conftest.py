@@ -11,19 +11,19 @@ CP0 credential blocker policy (from P0_READINESS.md):
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
+from datetime import date
+from decimal import Decimal
 from typing import Any
 
 import pytest
 
 from fincouncil.data.schema import (
-    CanonicalRecord,
-    FiscalPeriod,
-    PriceRecord,
+    CurrencyCode,
     FundamentalsRecord,
-    SourceTag,
-    SymbolRecord,
-    ReconcileResult,
+    Period,
+    PriceRecord,
+    ReconcileLogRecord,
+    ReconcileStatus,
 )
 
 
@@ -48,14 +48,6 @@ def has_any_provider_credential() -> bool:
     return any(os.getenv(v) for v in CREDENTIAL_ENV_VARS)
 
 
-def requires_credentials(marker_name: str = "live") -> bool:
-    """Check whether the required credential for a specific provider exists.
-
-    This is a simple gate — individual tests can refine it.
-    """
-    return has_any_provider_credential()
-
-
 # ---------------------------------------------------------------------------
 # Pytest hooks
 # ---------------------------------------------------------------------------
@@ -78,90 +70,86 @@ def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _currency(code: str) -> CurrencyCode:
+    return CurrencyCode(code)
+
+
+# ---------------------------------------------------------------------------
 # Synthetic test fixtures — clearly NOT real financial data
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def synthetic_source_openbb() -> SourceTag:
-    """Synthetic source tag — ``openbb`` provider, frozen timestamp."""
-    return SourceTag(provider="openbb", fetched_at=datetime(2026, 6, 2, 20, 0, 0))
-
-
-@pytest.fixture
-def synthetic_source_yfinance() -> SourceTag:
-    """Synthetic source tag — ``yfinance`` provider, frozen timestamp."""
-    return SourceTag(provider="yfinance", fetched_at=datetime(2026, 6, 2, 20, 5, 0))
-
-
-@pytest.fixture
-def synthetic_price_aapl(synthetic_source_openbb: SourceTag) -> PriceRecord:
+def synthetic_price_aapl() -> PriceRecord:
     """Synthetic AAPL price record — **test fixture, not real data**."""
     return PriceRecord(
-        symbol="NASDAQ:AAPL",
-        source=synthetic_source_openbb,
-        currency="USD",
+        source="openbb",
+        currency=_currency("USD"),
         as_of=date(2026, 6, 2),
-        open=195.00,
-        high=196.50,
-        low=194.80,
-        close=195.50,
+        symbol="NASDAQ:AAPL",
+        date=date(2026, 6, 2),
+        open=Decimal("195.00"),
+        high=Decimal("196.50"),
+        low=Decimal("194.80"),
+        close=Decimal("195.50"),
         volume=50_000_000,
-        adjusted_close=195.50,
+        adjusted_close=Decimal("195.50"),
     )
 
 
 @pytest.fixture
-def synthetic_price_ptt(synthetic_source_openbb: SourceTag) -> PriceRecord:
+def synthetic_price_ptt() -> PriceRecord:
     """Synthetic PTT.BK price record — **test fixture, not real data**."""
     return PriceRecord(
-        symbol="SET:PTT",
-        source=synthetic_source_openbb,
-        currency="THB",
+        source="openbb",
+        currency=_currency("THB"),
         as_of=date(2026, 6, 2),
-        open=32.50,
-        high=32.75,
-        low=32.25,
-        close=32.60,
+        symbol="SET:PTT",
+        date=date(2026, 6, 2),
+        open=Decimal("32.50"),
+        high=Decimal("32.75"),
+        low=Decimal("32.25"),
+        close=Decimal("32.60"),
         volume=15_000_000,
-        adjusted_close=32.60,
+        adjusted_close=Decimal("32.60"),
     )
 
 
 @pytest.fixture
-def synthetic_price_00700(synthetic_source_openbb: SourceTag) -> PriceRecord:
+def synthetic_price_00700() -> PriceRecord:
     """Synthetic 00700.HK price record — **test fixture, not real data**."""
     return PriceRecord(
-        symbol="HKEX:00700",
-        source=synthetic_source_openbb,
-        currency="HKD",
+        source="openbb",
+        currency=_currency("HKD"),
         as_of=date(2026, 6, 2),
-        open=480.00,
-        high=485.00,
-        low=478.50,
-        close=483.00,
+        symbol="HKEX:00700",
+        date=date(2026, 6, 2),
+        open=Decimal("480.00"),
+        high=Decimal("485.00"),
+        low=Decimal("478.50"),
+        close=Decimal("483.00"),
         volume=12_000_000,
-        adjusted_close=483.00,
+        adjusted_close=Decimal("483.00"),
     )
 
 
 @pytest.fixture
-def synthetic_fundamentals_aapl(synthetic_source_openbb: SourceTag) -> FundamentalsRecord:
+def synthetic_fundamentals_aapl() -> FundamentalsRecord:
     """Synthetic AAPL fundamentals — **test fixture, not real data**."""
     return FundamentalsRecord(
-        symbol="NASDAQ:AAPL",
-        source=synthetic_source_openbb,
-        currency="USD",
+        source="openbb",
+        currency=_currency("USD"),
         as_of=date(2026, 6, 2),
-        period=FiscalPeriod.FY,
+        symbol="NASDAQ:AAPL",
+        period=Period.FY,
         fiscal_date=date(2025, 9, 27),
-        line_items={
-            "revenue": 391_000_000_000,
-            "net_income": 94_000_000_000,
-            "total_assets": 365_000_000_000,
-            "total_equity": 62_000_000_000,
-        },
-        ratios={
-            "pe_ratio": 33.0,
-            "roe": 1.52,
-        },
+        revenue=Decimal("391000000000"),
+        net_income=Decimal("94000000000"),
+        total_assets=Decimal("365000000000"),
+        shareholders_equity=Decimal("62000000000"),
+        eps=Decimal("6.11"),
+        pe_ratio=Decimal("33.0"),
+        roe=Decimal("1.52"),
     )
