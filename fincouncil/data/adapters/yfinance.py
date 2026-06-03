@@ -96,14 +96,59 @@ class YFinanceAdapter(BaseAdapter):
     def get_fundamentals(self, symbol: str, period: str = "FY") -> list[dict[str, Any]]:
         """Fetch raw yfinance fundamentals rows across statement endpoints.
 
-        Phase 1 scope: price-only for second source, fundamentals raises NotImplementedError.
-        This will be extended in future phases to provide multi-market fundamentals
-        for reconcile comparison.
-        """
+        Returns one dict per ``fundamental_endpoints`` entry.  The ``info``
+        endpoint yields a single dict of key company metrics (market cap, PE,
+        sector, etc.).  The statement endpoints (financials, balance_sheet,
+        cashflow) yield column-oriented DataFrames that we restructure as
+        one dict per reporting period.
 
-        raise NotImplementedError(
-            "yfinance fundamentals not yet implemented — Phase 1 scope is price-only for second source"
-        )
+        Each returned dict is annotated with ``source``, ``provider``,
+        ``provider_backend``, ``provider_symbol``, and ``provider_call``
+        metadata matching the price adapter convention.
+        """
+        yf = self._get_client()
+        provider_symbol = _to_provider_symbol(symbol)
+        ticker = yf.Ticker(provider_symbol)
+        results: list[dict[str, Any]] = []
+
+        for endpoint in self.fundamental_endpoints:
+            try:
+                target = ticker
+                for attr in endpoint.path:
+                    target = getattr(target, attr)
+
+                if endpoint.name == "info":
+                    # .info returns a plain dict
+                    if target and isinstance(target, dict):
+                        row = dict(target)
+                        row["endpoint"] = endpoint.name
+                        row["symbol"] = symbol
+                        row["period"] = period
+                        results.append(self._annotate(row, provider_symbol, "ticker.info"))
+                else:
+                    # .financials / .balance_sheet / .cashflow return DataFrames
+                    if target is not None and hasattr(target, "columns"):
+                        for col_idx in range(len(target.columns)):
+                            period_label = str(target.columns[col_idx])
+                            row = {"endpoint": endpoint.name, "symbol": symbol, "period": period_label}
+                            for field_name in target.index:
+                                val = target.iloc[target.index.get_loc(field_name), col_idx]
+                                row[field_name] = val if val == val else None  # NaN guard
+                            results.append(self._annotate(row, provider_symbol, f"ticker.{endpoint.path[-1]}"))
+            except Exception:
+                # Individual endpoint failures should not block others
+                continue
+
+        return results
+
+    def _annotate(self, row: dict, provider_symbol: str, call: str) -> dict:
+        """Add provider metadata to a raw fundamentals row."""
+        row["source"] = f"yfinance:yfinance"
+        row["provider"] = "yfinance"
+        row["provider_backend"] = "yfinance"
+        row["provider_symbol"] = provider_symbol
+        row["provider_call"] = call
+        return row
 
     def _get_client(self) -> Any:
         if self._client is not None:

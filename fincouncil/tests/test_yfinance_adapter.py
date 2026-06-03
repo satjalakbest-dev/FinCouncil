@@ -20,6 +20,23 @@ class FakeYFinanceClient:
     class FakeTicker:
         def __init__(self, symbol: str):
             self.symbol = symbol
+            self.info = {"totalRevenue": 100000, "netIncome": 20000, "sector": "Technology"}
+            import pandas as pd
+            self.financials = pd.DataFrame(
+                {"Total Revenue": [100000, 90000], "Net Income": [20000, 18000]},
+                index=pd.Index(["Total Revenue", "Net Income"]),
+                columns=pd.to_datetime(["2024-12-31", "2023-12-31"]),
+            )
+            self.balance_sheet = pd.DataFrame(
+                {"Total Assets": [500000, 450000]},
+                index=pd.Index(["Total Assets"]),
+                columns=pd.to_datetime(["2024-12-31"]),
+            )
+            self.cashflow = pd.DataFrame(
+                {"Operating Cash Flow": [30000, 25000]},
+                index=pd.Index(["Operating Cash Flow"]),
+                columns=pd.to_datetime(["2024-12-31", "2023-12-31"]),
+            )
 
         def history(self, start: str, end: str):
             """Return fake price data as DataFrame-like object."""
@@ -120,10 +137,17 @@ class TestYFinanceGetPrice:
 class TestYFinanceGetFundamentals:
     """Tests for get_fundamentals method."""
 
-    def test_get_fundamentals_raises_not_implemented(self):
+    def test_get_fundamentals_returns_records(self):
         adapter = YFinanceAdapter(client=FakeYFinanceClient())
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
-            adapter.get_fundamentals("US:AAPL")
+        results = adapter.get_fundamentals("US:AAPL")
+        assert isinstance(results, list)
+        assert len(results) > 0
+        for r in results:
+            assert "source" in r
+            assert r["source"] == "yfinance:yfinance"
+            assert "endpoint" in r
+            assert "symbol" in r
+            assert "provider" in r
 
 
 class TestSymbolConversion:

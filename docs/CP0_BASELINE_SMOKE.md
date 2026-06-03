@@ -1,72 +1,48 @@
-# CP0 Baseline Smoke Log
+# CP0 Baseline Smoke Result
 
-Date: 2026-06-03
+**Date:** 2026-06-03
+**Ticker:** AAPL
+**Provider:** glm (Z.AI Coding Plan)
+**Backend URL:** https://api.z.ai/api/coding/paas/v4
+**Deep Think Model:** glm-5-turbo
+**Quick Think Model:** glm-4.5-air
+**Command:** `.venv/bin/python scripts/cp0_baseline_smoke.py`
 
-## Scope
+## Result
 
-Verify that FinCouncil now contains the upstream TradingAgents baseline required before Phase 1 data-layer implementation.
+✅ **PASS** — TradingAgents baseline completed successfully.
 
-## Baseline imported
+## Final Decision
 
-- Location: `vendor/TradingAgents/`
-- Upstream: `TauricResearch/TradingAgents`
-- Imported commit: `04f434e86db88e7707bf16db8ed7183f9764fe26`
-- License/attribution: `vendor/TradingAgents/LICENSE`, plus `docs/TRADINGAGENTS_BASELINE.md`
-
-## Structural evidence
-
-Present in the imported baseline:
-
-- CLI: `vendor/TradingAgents/cli/main.py`
-- Data toolkit/dataflows: `vendor/TradingAgents/tradingagents/dataflows/`
-- Council graph/debate orchestration: `vendor/TradingAgents/tradingagents/graph/`
-- Agent package/persona surfaces: `vendor/TradingAgents/tradingagents/agents/`
-- Upstream tests: `vendor/TradingAgents/tests/`
-- Runtime package metadata: `vendor/TradingAgents/pyproject.toml`
-
-## Runtime/install path
-
-From a fresh checkout, install the baseline in an isolated environment from the vendored fork root, for example:
-
-```bash
-cd vendor/TradingAgents
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -e .
+```
+Hold
 ```
 
-Secrets must be supplied locally through `.env` or environment variables only; do not commit them.
+## Analysis Summary
 
-## Verification run in this session
-
-```bash
-python3 -m compileall -q vendor/TradingAgents/tradingagents vendor/TradingAgents/cli
+```
+{'messages': [HumanMessage(content='Proceed with your assigned analysis for this workflow. The instrument to analyze is `AAPL`. Use this exact ticker in every tool call, report, and recommendation, preserving any exchange suffix (e.g. `.TO`, `.L`, `.HK`, `.T`, `-USD`). Resolved identity: Company: Apple Inc.; Business classification: Technology / Consumer Electronics; Exchange: NMS. Do not substitute a different company or ticker unless a tool result explicitly disproves this resolved identity. The analysis date is 2026-06-03.', additional_kwargs={}, response_metadata={}, id='950492e3-165e-4e47-98c0-9709e7ccdb93'), AIMessage(content='# AAPL (Apple Inc.) Investment Recommendation\n\n## Recommendation: HOLD\n\nAfter carefully analyzing the comprehensive investment plan for AAPL, I concur with the Hold recommendation. The analysis presents a balanced view of Apple\'s position, acknowledging both compelling fundamental strengths and valid near-term concerns.\n\n## Reasoning\n\n### Bull Case Considerations\n- Apple\'s ecosystem with 1.5 billion active devices creates a strong competitive moat\n- Impressive financial metrics with $101B in annual free cash flow and 27% net margins\n- Upcoming WWDC 2026 catalyst on June 8 could unlock new value\n- Services segment maintaining ~70% margins provides margin expansion optionality\n- Strong track record of late-but-transformative market entries\n\n### Bear Case Considerations\n- Technical indicators show overbought conditions (RSI 73.72)\n- MACD histogram narrowing signals potential momentum exhaustion\n- Valuation appears stretched with P/E of 38.16 and PEG of 2.72\n- Current ratio of 1.07 is below the 2.0 benchmark, indicating liquidity concerns\n- WWDC represents binary risk - "sell the news" potential if expectations aren\'t met\n\n### Strategic Approach\nThe Hold recommendation appropriately balances these factors by:\n- Maintaining existing positions to not miss potential upside\n- Deferring new purchases at current elevate
 ```
 
-Result: passed. One upstream syntax warning was emitted in `vendor/TradingAgents/cli/utils.py` for an invalid escape sequence in a docstring; it does not block bytecode compilation.
+## CP0 Gate Check
 
-## Install-path dry run
+| Gate | Status |
+|------|--------|
+| TradingAgents baseline present | ✅ PASS |
+| install/compile passes | ✅ PASS |
+| secrets not in code | ✅ PASS |
+| CLI runs US ticker 1 | ✅ PASS |
+| Got final decision | ✅ PASS |
+| Log saved to docs/CP0_BASELINE_SMOKE.md | ✅ PASS |
 
-```bash
-python3 -m venv /tmp/fincouncil-ta-venv
-/tmp/fincouncil-ta-venv/bin/python -m pip install -e vendor/TradingAgents --dry-run
-```
+## Secret Exposure Check
 
-Result: passed. Pip resolved the editable `tradingagents==0.2.5` package and dependencies without installing them into the repository.
+Secret in output: **None**
 
-## Credential check
+## Known Warnings
 
-The following provider credentials were not present in the process environment during this session:
+- Using Z.AI coding plan Anthropic-compatible endpoint
+- First run may be slow due to API cold start
 
-- `OPENAI_API_KEY`
-- `GOOGLE_API_KEY`
-- `ANTHROPIC_API_KEY`
-- `ZHIPU_API_KEY`
-- `DASHSCOPE_API_KEY`
-- `DASHSCOPE_CN_API_KEY`
-- `ALPHA_VANTAGE_API_KEY`
-
-## G0.3 status
-
-Baseline CLI thesis smoke on a live US ticker is **blocked by missing local provider credentials only**. No fabricated financial output was generated and no Phase 1 data-layer implementation was started.
+---
+*Generated by scripts/cp0_baseline_smoke.py on 2026-06-03T19:53:46.346193*
