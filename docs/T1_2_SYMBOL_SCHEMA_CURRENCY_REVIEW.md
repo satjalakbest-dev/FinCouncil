@@ -35,10 +35,12 @@ is integrated.
   provider mapping from silently routing a mismatched instrument.
 - PASS: Tests cover all T1.2 provider suffix classes named in the sprint: no
   suffix for US, `.T`, `.BK`, `.HK`, `.SS`, and `.SZ`.
-- WATCH: Provider-specific mapping/round-trip functions are not implemented in
-  this review lane; downstream T1.2 implementation should use the fixture table
-  above and preserve leading-zero tickers such as `00700` and `000001`.
-- WATCH: Currency is validated structurally as uppercase three-letter code, not
-  against a full ISO-4217 registry. This is sufficient for Phase 1 contracts and
-  avoids a new dependency; provider normalizers should still source currency from
-  provider metadata rather than inference when possible.
+- PASS: `SymbolRecord.currency` is defined as market quote currency, which keeps
+  symbol fixtures deterministic for downstream price records.
+- PASS: Phase 1 currency validation rejects structurally plausible but unsupported
+  codes such as `ZZZ` while keeping the market currencies in this review fixture.
+- PASS: The schema catches mismatched `yfinance` suffixes for the T1.2 fixture
+  exchanges, including leading-zero tickers such as `00700` and `000001`.
+- WATCH: Full provider round-trip conversion functions are not implemented in this
+  review lane; downstream T1.2 implementation should use the fixture table above
+  as the shared independent cross-check input.

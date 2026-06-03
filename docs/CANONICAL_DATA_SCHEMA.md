@@ -12,7 +12,7 @@ Every canonical record type **must** include these fields:
 | Field | Type | Required | Notes |
 |---|---:|:---:|---|
 | `source` | string | yes | Provider or normalized pipeline name, non-empty. |
-| `currency` | ISO-4217 string | yes | Three uppercase letters such as `USD`, `JPY`, `THB`, `HKD`, `CNY`. |
+| `currency` | ISO-4217 string | yes | Phase 1 allowlisted uppercase currency code such as `USD`, `JPY`, `THB`, `HKD`, `CNY`. |
 | `as_of` | date/datetime | yes | When the record or provider value is considered current/auditable. |
 
 ## `price`
@@ -29,7 +29,7 @@ End-of-day OHLCV record. Monetary fields are quoted in `currency`.
 | `low` | Decimal | yes | Non-negative; must be <= `high`. |
 | `close` | Decimal | yes | Non-negative; within `low`/`high`. |
 | `volume` | integer | yes | Non-negative provider-reported share/unit count. |
-| `adjusted_close` | Decimal | yes | Split/dividend-adjusted close when provider supports it; otherwise equals `close` and the normalizer must document that provider behavior. |
+| `adjusted_close` | Decimal | yes | Non-negative split/dividend-adjusted close when provider supports it; otherwise equals `close`. It may differ from the raw OHLC range on split/dividend adjustment days. |
 | `source`, `currency`, `as_of` | see universal fields | yes | Required on every record. |
 
 ## `fundamentals`
@@ -75,7 +75,7 @@ Canonical instrument identity and provider mapping record.
 | `name` | string | optional | Issuer/security display name. |
 | `country` | string | optional | ISO country or market label when known. |
 | `asset_type` | string | yes | Defaults to `equity`; later phases may add other asset types. |
-| `source`, `currency`, `as_of` | see universal fields | yes | Required on every record, even for symbols. |
+| `source`, `currency`, `as_of` | see universal fields | yes | Required on every record. For symbols, `currency` means the market quote currency used by price records for that exchange. |
 
 ## `reconcile_log`
 

@@ -17,6 +17,33 @@ from typing import Any, Literal, Mapping, NewType, Sequence
 CurrencyCode = NewType("CurrencyCode", str)
 RecordKind = Literal["price", "fundamentals", "symbol", "reconcile_log"]
 
+PHASE1_CURRENCY_CODES = frozenset(
+    {
+        "USD",
+        "JPY",
+        "THB",
+        "HKD",
+        "CNY",
+        "EUR",
+        "GBP",
+        "CAD",
+        "AUD",
+        "CHF",
+        "SGD",
+        "KRW",
+        "INR",
+    }
+)
+YFINANCE_SUFFIX_BY_EXCHANGE = {
+    "NASDAQ": "",
+    "NYSE": "",
+    "TSE": ".T",
+    "SET": ".BK",
+    "HKEX": ".HK",
+    "SSE": ".SS",
+    "SZSE": ".SZ",
+}
+
 
 class ValidationError(ValueError):
     """Raised when a canonical record violates the Phase 1 contract."""
@@ -79,7 +106,7 @@ class PriceRecord(SourceStampedRecord):
             raise ValidationError("volume must be non-negative")
         if self.low > self.high:
             raise ValidationError("low must be less than or equal to high")
-        for field_name in ("open", "close", "adjusted_close"):
+        for field_name in ("open", "close"):
             value = getattr(self, field_name)
             if value < self.low or value > self.high:
                 raise ValidationError(f"{field_name} must fall within low/high")
@@ -160,6 +187,8 @@ class SymbolRecord(SourceStampedRecord):
         for provider, provider_symbol in self.provider_symbols.items():
             _require_non_empty("provider", provider)
             _require_non_empty(f"provider_symbols[{provider}]", provider_symbol)
+            if provider == "yfinance":
+                _validate_yfinance_symbol(self.exchange, self.ticker, provider_symbol)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -243,6 +272,19 @@ def _validate_currency(currency: CurrencyCode) -> None:
     value = str(currency)
     if len(value) != 3 or not value.isalpha() or value.upper() != value:
         raise ValidationError("currency must be an uppercase ISO-4217 code")
+    if value not in PHASE1_CURRENCY_CODES:
+        raise ValidationError("currency is not in the Phase 1 ISO-4217 allowlist")
+
+
+def _validate_yfinance_symbol(exchange: str, ticker: str, provider_symbol: str) -> None:
+    expected_suffix = YFINANCE_SUFFIX_BY_EXCHANGE.get(exchange)
+    if expected_suffix is None:
+        return
+    expected_symbol = f"{ticker}{expected_suffix}"
+    if provider_symbol != expected_symbol:
+        raise ValidationError(
+            f"yfinance provider symbol for {exchange} must be {expected_symbol}"
+        )
 
 
 def _validate_temporal(field_name: str, value: date | datetime) -> None:

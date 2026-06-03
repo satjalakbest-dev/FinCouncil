@@ -158,3 +158,78 @@ def test_symbol_record_rejects_mismatched_symbol_components() -> None:
 
     with pytest.raises(ValidationError, match="match exchange and ticker"):
         validate_record(record)
+
+
+def test_price_record_allows_adjusted_close_outside_raw_ohlc_range() -> None:
+    record = PriceRecord(
+        symbol="NASDAQ:AAPL",
+        date=date(2026, 6, 1),
+        open=Decimal("100"),
+        high=Decimal("110"),
+        low=Decimal("90"),
+        close=Decimal("105"),
+        volume=100,
+        adjusted_close=Decimal("52.50"),
+        source="openbb:yfinance",
+        currency=CurrencyCode("USD"),
+        as_of=date(2026, 6, 2),
+    )
+
+    validate_record(record)
+
+
+def test_currency_rejects_unsupported_iso_like_code() -> None:
+    record = PriceRecord(
+        symbol="NASDAQ:AAPL",
+        date=date(2026, 6, 1),
+        open=Decimal("10"),
+        high=Decimal("12"),
+        low=Decimal("9"),
+        close=Decimal("11"),
+        volume=100,
+        adjusted_close=Decimal("11"),
+        source="openbb:yfinance",
+        currency=CurrencyCode("ZZZ"),
+        as_of=date(2026, 6, 2),
+    )
+
+    with pytest.raises(ValidationError, match="allowlist"):
+        validate_record(record)
+
+
+def test_symbol_record_rejects_bad_yfinance_suffix_for_known_exchanges() -> None:
+    record = SymbolRecord(
+        symbol="TSE:7011",
+        exchange="TSE",
+        ticker="7011",
+        provider_symbols={"yfinance": "7011.HK"},
+        source="t1.2-review-fixture",
+        currency=CurrencyCode("JPY"),
+        as_of=date(2026, 6, 2),
+    )
+
+    with pytest.raises(ValidationError, match="yfinance provider symbol"):
+        validate_record(record)
+
+
+@pytest.mark.parametrize(
+    "provider_symbols",
+    [
+        {},
+        {"": "AAPL"},
+        {"yfinance": ""},
+    ],
+)
+def test_symbol_record_rejects_empty_provider_mapping(provider_symbols) -> None:
+    record = SymbolRecord(
+        symbol="NASDAQ:AAPL",
+        exchange="NASDAQ",
+        ticker="AAPL",
+        provider_symbols=provider_symbols,
+        source="t1.2-review-fixture",
+        currency=CurrencyCode("USD"),
+        as_of=date(2026, 6, 2),
+    )
+
+    with pytest.raises(ValidationError):
+        validate_record(record)
