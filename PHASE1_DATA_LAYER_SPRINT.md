@@ -2,7 +2,7 @@
 *keystone phase · No code (เป็น backlog ให้ agent ลงมือ) · เป้าหมาย sprint = ผ่าน **CP1***
 
 > **ทำไมเฟสนี้สำคัญสุด:** นี่คือ "คูเมือง" — ถ้า data ไม่แม่น/verify ไม่ได้ ทุกชั้นบน (council, valuation, eval gate) = garbage in. เฟสนี้คือสิ่งที่ทำให้ระบบเราต่างจากคนที่แค่ fork TradingAgents เปล่าๆ
-> **Pre-req:** P0 ผ่านแล้ว (fork รัน baseline ได้, env+secret, DuckDB init)
+> **Pre-req / Hard gate:** P0/CP0 ต้องผ่านและมีหลักฐานใน repo นี้ก่อนเริ่ม Phase 1 (fork รัน baseline ได้, env+secret, DuckDB init)
 > **Sprint Goal:** council (fork) ดึงราคา/พื้นฐาน **US + global + ไทย-ราคา** จาก **data layer ของเรา** (ไม่ใช่ AV/Yahoo ของ fork) + `reconcile` ทำงาน + ทุก record มี source/currency
 
 ---
@@ -13,13 +13,39 @@
 
 ---
 
+## Gate G0 — CP0 readiness before Phase 1 implementation
+
+> **Hard gate:** ห้ามเริ่ม T1.1–T1.12 จนกว่า CP0 จะพิสูจน์ได้ใน repo นี้ เพราะตอนนี้ Phase 1 ต้องต่อยอดบน TradingAgents fork ที่รันได้จริง ไม่ใช่ docs-only scaffold
+
+### G0.1 — Fork baseline present
+- **Goal:** repo มีฐาน `TauricResearch/TradingAgents` แบบ fork/extend พร้อม attribution/license เดิม
+- **Outputs:** source tree ของ TradingAgents อยู่ใน repo; `NOTICE`/license attribution ไม่หาย; โครง `fincouncil/` อยู่ข้าง fork ตาม `PROJECT_SETUP.md`
+- **Acceptance:** พบ CLI/data-toolkit/persona/debate/backtest ของ fork ใน repo; ไม่ใช่การ rewrite ใหม่
+- **Owner:** CC · **Depends:** — · 🔁 no
+
+### G0.2 — Reproducible runtime + secret boundary
+- **Goal:** env รัน baseline ได้โดยไม่ commit secrets
+- **Outputs:** dependency install path; `.env.example` มีชื่อ key เปล่า; `.gitignore` กัน `.env`, DuckDB local files, parquet warehouse/cache
+- **Acceptance:** fresh install ทำตามเอกสารได้; secret scan เบื้องต้นไม่พบ key จริงใน repo
+- **Owner:** CC+CX · **Depends:** G0.1 · 🔁 no
+
+### G0.3 — Baseline council smoke (CP0)
+- **Goal:** รัน TradingAgents เดิมก่อนแก้ data layer
+- **Outputs:** smoke log/artifact ของ CLI บน US ticker 1 ตัว ด้วย provider=GLM/zai หรือ mock-free documented fallback ถ้าไม่มี keyในเครื่อง
+- **Acceptance:** ได้ decision/thesis จาก baseline หรือบันทึกชัดเจนว่า blocker คือ missing credential เท่านั้น; ไม่มีการแตะ data layer ก่อนรู้ baseline state
+- **Owner:** CC · **Depends:** G0.2 · 🔁 no
+
+**CP0 pass condition:** G0.1–G0.3 ผ่านครบก่อนเริ่ม Workstream A. ถ้าไม่ผ่าน ให้หยุดที่ P0 remediation ไม่ข้ามไปสร้าง data layer เพราะจะเสี่ยงกลายเป็น rebuild แทน fork-and-extend
+
+---
+
 ## Workstream A — Schema + Storage (รากฐาน)
 
 ### T1.1 — Canonical schema design
 - **Goal:** นิยาม schema กลางของ record ทุกชนิด: `price`, `fundamentals`, `symbol`, `reconcile_log`
 - **Outputs:** เอกสาร schema — fields/types/units; **ทุก record มี `source` + `currency` + `as_of` เสมอ**; price: date/o/h/l/c/volume/adjusted_close; fundamentals: period(FY/Q)/fiscal_date/รายการงบหลัก+ratios
 - **Acceptance:** schema ครอบทุก field ที่ CP1 ต้องใช้; ผ่าน review; เป็น contract ให้ task อื่นอ้าง
-- **Owner:** CC · **Depends:** — · 🔁 no (แต่ CX review)
+- **Owner:** CC · **Depends:** G0/CP0 · 🔁 no (แต่ CX review)
 
 ### T1.2 — Symbol convention + mapping 🔁
 - **Goal:** map `{exchange}:{ticker}` กลาง ↔ suffix ของแต่ละ provider (US, `.T`, `.BK`, `.HK`, `.SS`, `.SZ`)
@@ -110,13 +136,13 @@
 
 ## ลำดับ/critical path (สั่งงาน 2 agent ยังไง)
 ```
-T1.1 (CC) ─┬─► T1.2 (CC+CX 🔁) ─────────────┐
+G0/CP0 ─► T1.1 (CC) ─┬─► T1.2 (CC+CX 🔁) ─────────────┐
            ├─► T1.3 (CX) ──────────┐         │
            ├─► T1.4 (CX) ─► T1.6(CC)┼─►T1.7(CX)┤
            └─► T1.5 (CX) ──────────┘         │
                          T1.9(CX)─► T1.8(CC+CX 🔁)─► T1.10(CC)─►T1.11(CC)─►T1.12(CC+CX)
 ```
-- **Critical path:** T1.1 → T1.6 → T1.8 → T1.10 → T1.11 → T1.12
+- **Critical path:** G0/CP0 → T1.1 → T1.6 → T1.8 → T1.10 → T1.11 → T1.12
 - **ขนานได้:** T1.2/T1.3/T1.4/T1.5 หลัง T1.1 · T1.9 คู่กับ B
 - **CC โฟกัส:** T1.1, T1.6, T1.10, T1.11 + ครึ่ง critical (T1.2, T1.8, T1.12)
 - **CX โฟกัส:** T1.3, T1.4, T1.5, T1.7, T1.9 + ครึ่ง critical

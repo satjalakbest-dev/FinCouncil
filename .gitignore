@@ -1,0 +1,30 @@
+# Secrets / local configuration
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Local data warehouse / caches
+fincouncil/data/store/*
+!fincouncil/data/store/.gitkeep
+fincouncil/data/cache/*
+!fincouncil/data/cache/.gitkeep
+*.duckdb
+*.duckdb.wal
+*.parquet
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
