@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import fincouncil.tests.conftest as suite_conftest
+
 from fincouncil.data.adapters.yfinance import (
     YFinanceAdapter,
     YFinanceAdapterError,
@@ -233,15 +235,13 @@ class TestInvalidSymbolHandling:
             adapter.get_price("LON:BARC", date(2024, 1, 1), date(2024, 1, 31))
 
 
-@pytest.mark.live
-class TestYFinanceAdapterIntegration:
-    """Integration tests for yfinance adapter with mock data resembling real responses.
+class TestYFinanceAdapterContractAcrossMarkets:
+    """Offline contract tests using fake yfinance-shaped responses.
 
-    These tests verify the adapter returns valid data structure for sample tickers
-    across US, TH, and HK markets (CP1 requirement T1.9).
-
-    Marked ``@pytest.mark.live`` — auto-skipped when no provider credentials
-    are present (see conftest.py ``pytest_collection_modifyitems``).
+    These tests verify adapter record shape and provider-symbol mapping across
+    representative markets. They intentionally use ``FakeYFinanceClient`` and
+    must remain always-on; true yfinance network tests require both
+    ``@pytest.mark.live`` and ``@pytest.mark.yfinance`` plus ``YFINANCE_LIVE=1``.
     """
 
     def test_us_ticker_returns_valid_data(self):
@@ -324,3 +324,89 @@ class TestYFinanceAdapterIntegration:
         for record in result:
             assert record["provider_symbol"] == "000001.SZ"
             assert record["provider"] == "yfinance"
+
+
+class _FakeCollectedItem:
+    """Small pytest item stand-in for testing collection marker policy."""
+
+    def __init__(
+        self,
+        keywords,
+        nodeid="fincouncil/tests/test_other_provider.py::test_case",
+    ):
+        self.keywords = set(keywords)
+        self.nodeid = nodeid
+        self.added_markers = []
+
+    def add_marker(self, marker):
+        self.added_markers.append(marker)
+
+
+def _skip_reasons(item):
+    return [marker.kwargs.get("reason", "") for marker in item.added_markers]
+
+
+def _clear_provider_credentials(monkeypatch):
+    for env_var in suite_conftest.CREDENTIAL_ENV_VARS:
+        monkeypatch.delenv(env_var, raising=False)
+
+
+def test_yfinance_contract_tests_are_not_live_marked():
+    """Fake-client yfinance contract tests must run in default offline pytest."""
+    assert not hasattr(TestYFinanceAdapterContractAcrossMarkets, "pytestmark")
+
+
+def test_yfinance_live_marker_requires_provider_specific_opt_in(monkeypatch):
+    """Unrelated credentials must not enable yfinance live tests."""
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-unrelated-key")
+    monkeypatch.delenv(suite_conftest.YFINANCE_LIVE_ENV, raising=False)
+    item = _FakeCollectedItem({"live", "yfinance"})
+
+    suite_conftest.pytest_collection_modifyitems(None, [item])
+
+    assert _skip_reasons(item) == [suite_conftest.YFINANCE_LIVE_SKIP_REASON]
+
+
+def test_yfinance_live_marker_runs_when_explicitly_enabled(monkeypatch):
+    """The future yfinance live contract is YFINANCE_LIVE=1 + live+yfinance."""
+    _clear_provider_credentials(monkeypatch)
+    monkeypatch.setenv(suite_conftest.YFINANCE_LIVE_ENV, "1")
+    item = _FakeCollectedItem({"live", "yfinance"})
+
+    suite_conftest.pytest_collection_modifyitems(None, [item])
+
+    assert item.added_markers == []
+
+
+def test_credentialed_live_marker_still_uses_provider_credentials(monkeypatch):
+    """Non-yfinance live tests keep the existing credential-gated behavior."""
+    _clear_provider_credentials(monkeypatch)
+    monkeypatch.delenv(suite_conftest.YFINANCE_LIVE_ENV, raising=False)
+    item = _FakeCollectedItem({"live"})
+
+    suite_conftest.pytest_collection_modifyitems(None, [item])
+
+    assert _skip_reasons(item) == [suite_conftest.MISSING_CREDENTIALS_SKIP_REASON]
+
+
+def test_yfinance_marker_without_live_is_rejected(monkeypatch):
+    """Future yfinance network tests must not use yfinance marker alone."""
+    monkeypatch.setenv(suite_conftest.YFINANCE_LIVE_ENV, "1")
+    item = _FakeCollectedItem({"yfinance"})
+
+    suite_conftest.pytest_collection_modifyitems(None, [item])
+
+    assert _skip_reasons(item) == [suite_conftest.YFINANCE_MARKER_CONTRACT_SKIP_REASON]
+
+
+def test_yfinance_file_live_marker_without_yfinance_is_rejected(monkeypatch):
+    """A live test in yfinance test files must also carry the yfinance marker."""
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-unrelated-key")
+    item = _FakeCollectedItem(
+        {"live"},
+        nodeid="fincouncil/tests/test_yfinance_adapter.py::test_future_live",
+    )
+
+    suite_conftest.pytest_collection_modifyitems(None, [item])
+
+    assert _skip_reasons(item) == [suite_conftest.YFINANCE_MARKER_CONTRACT_SKIP_REASON]

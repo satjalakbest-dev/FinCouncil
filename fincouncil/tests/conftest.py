@@ -2,9 +2,10 @@
 
 CP0 credential blocker policy (from P0_READINESS.md):
 - No fabricated financial output in production code paths.
-- No live provider validation unless credentials exist in the environment.
-- Tests that need live providers are marked with ``@pytest.mark.live``
-  and auto-skip when credentials are absent.
+- Live provider tests must be explicitly marked with ``@pytest.mark.live``.
+- Credentialed providers auto-skip when credentials are absent.
+- No-key providers use provider-specific opt-ins; yfinance live tests must also
+  be marked ``@pytest.mark.yfinance`` and require ``YFINANCE_LIVE=1``.
 - Unit tests use synthetic fixtures clearly labeled as test data.
 """
 
@@ -28,8 +29,15 @@ from fincouncil.data.schema import (
 
 
 # ---------------------------------------------------------------------------
-# Credential guard — auto-skip live tests when keys are absent
+# Live-test guards — keep default pytest hermetic
 # ---------------------------------------------------------------------------
+
+YFINANCE_LIVE_ENV = "YFINANCE_LIVE"
+YFINANCE_LIVE_SKIP_REASON = "Set YFINANCE_LIVE=1 to run yfinance live tests"
+YFINANCE_MARKER_CONTRACT_SKIP_REASON = (
+    "yfinance live tests require both @pytest.mark.live and @pytest.mark.yfinance"
+)
+MISSING_CREDENTIALS_SKIP_REASON = "No provider credentials in environment"
 
 CREDENTIAL_ENV_VARS = [
     "OPENAI_API_KEY",
@@ -52,21 +60,63 @@ def has_any_provider_credential() -> bool:
 # Pytest hooks
 # ---------------------------------------------------------------------------
 
+def yfinance_live_enabled() -> bool:
+    """Return True only when yfinance live tests are explicitly enabled."""
+    return os.getenv(YFINANCE_LIVE_ENV) == "1"
+
+
 def pytest_configure(config: Any) -> None:
-    """Register the ``live`` marker."""
+    """Register live-provider markers used by the suite."""
     config.addinivalue_line(
-        "markers", "live: requires live provider credentials (auto-skip)"
+        "markers",
+        "live: requires an explicit live-provider opt-in or provider credentials",
+    )
+    config.addinivalue_line(
+        "markers",
+        "yfinance: yfinance-specific live provider test; requires YFINANCE_LIVE=1",
     )
 
 
 def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
-    """Auto-skip ``live`` tests when no provider credentials are present."""
-    if has_any_provider_credential():
-        return
-    skip_live = pytest.mark.skip(reason="No provider credentials in environment")
+    """Auto-skip live tests unless their provider-specific gate is open.
+
+    Credentialed providers keep the historical ``@pytest.mark.live`` behavior:
+    they run only when at least one provider credential is present.  yfinance is
+    intentionally different because it has no API key; unrelated credentials
+    must not enable yfinance network tests.
+    """
+    skip_missing_credentials = pytest.mark.skip(reason=MISSING_CREDENTIALS_SKIP_REASON)
+    skip_yfinance = pytest.mark.skip(reason=YFINANCE_LIVE_SKIP_REASON)
+    has_credentials = has_any_provider_credential()
+    run_yfinance_live = yfinance_live_enabled()
+
+    skip_yfinance_marker_contract = pytest.mark.skip(
+        reason=YFINANCE_MARKER_CONTRACT_SKIP_REASON
+    )
+
     for item in items:
-        if "live" in item.keywords:
-            item.add_marker(skip_live)
+        is_live = "live" in item.keywords
+        is_yfinance_marked = "yfinance" in item.keywords
+        is_yfinance_file = "yfinance" in str(getattr(item, "nodeid", ""))
+
+        if is_yfinance_marked and not is_live:
+            item.add_marker(skip_yfinance_marker_contract)
+            continue
+
+        if is_live and is_yfinance_file and not is_yfinance_marked:
+            item.add_marker(skip_yfinance_marker_contract)
+            continue
+
+        if not is_live:
+            continue
+
+        if is_yfinance_marked:
+            if not run_yfinance_live:
+                item.add_marker(skip_yfinance)
+            continue
+
+        if not has_credentials:
+            item.add_marker(skip_missing_credentials)
 
 
 # ---------------------------------------------------------------------------
