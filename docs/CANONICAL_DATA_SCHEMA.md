@@ -5,14 +5,15 @@ normalization, DuckDB storage, reconcile, MCP tools, and the later
 TradingAgents data shim. It is intentionally provider-neutral: raw adapter
 payloads stay outside this schema until normalized.
 
-## Universal audit fields
+## Universal audit and measurement fields
 
-Every canonical record type **must** include these fields:
+Every canonical record type **must** include source and temporal provenance. Monetary/security records also require currency; macro observations require unit/measurement.
 
 | Field | Type | Required | Notes |
 |---|---:|:---:|---|
 | `source` | string | yes | Provider or normalized pipeline name, non-empty. |
-| `currency` | ISO-4217 string | yes | Phase 1 allowlisted uppercase currency code such as `USD`, `JPY`, `THB`, `HKD`, `CNY`. |
+| `currency` | ISO-4217 string | monetary only | Required for price/fundamentals/reconcile monetary values; optional for monetary/FX macro series; not required for news/sentiment. |
+| `unit` | string | macro only | Required measurement unit for macro observations. |
 | `as_of` | date/datetime | yes | When the record or provider value is considered current/auditable. |
 
 ## `price`
@@ -30,7 +31,7 @@ End-of-day OHLCV record. Monetary fields are quoted in `currency`.
 | `close` | Decimal | yes | Non-negative; within `low`/`high`. |
 | `volume` | integer | yes | Non-negative provider-reported share/unit count. |
 | `adjusted_close` | Decimal | yes | Non-negative split/dividend-adjusted close when provider supports it; otherwise equals `close`. It may differ from the raw OHLC range on split/dividend adjustment days. |
-| `source`, `currency`, `as_of` | see universal fields | yes | Required on every record. |
+| `source`, `as_of`, `currency` | see audit/measurement fields | yes | Monetary record provenance and quote currency. |
 
 ## `fundamentals`
 
@@ -59,7 +60,7 @@ and market differences, but at least one core statement value is required.
 | `pb_ratio` | Decimal | optional | Price/book ratio. |
 | `roe` | Decimal | optional | Return on equity. |
 | `debt_to_equity` | Decimal | optional | Leverage ratio. |
-| `source`, `currency`, `as_of` | see universal fields | yes | Required on every record. |
+| `source`, `as_of`, `currency` | see audit/measurement fields | yes | Monetary record provenance and quote currency. |
 
 ## `symbol`
 
@@ -75,7 +76,7 @@ Canonical instrument identity and provider mapping record.
 | `name` | string | optional | Issuer/security display name. |
 | `country` | string | optional | ISO country or market label when known. |
 | `asset_type` | string | yes | Defaults to `equity`; later phases may add other asset types. |
-| `source`, `currency`, `as_of` | see universal fields | yes | Required on every record. For symbols, `currency` means the market quote currency used by price records for that exchange. |
+| `source`, `as_of`, `currency` | see audit/measurement fields | yes | For symbols, `currency` means the market quote currency used by price records for that exchange. |
 
 ## `reconcile_log`
 
@@ -92,10 +93,27 @@ Audit record for comparing the same field from two or more sources.
 | `threshold_pct` | Decimal | yes | Non-negative threshold used for this comparison. |
 | `status` | enum `PASS`/`FLAG` | yes | `FLAG` means discrepancy exceeded threshold. |
 | `explanation` | string | yes | Human-readable reason; discrepancies must surface, not be swallowed. |
-| `source`, `currency`, `as_of` | see universal fields | yes | Required on every record; `source` should identify the reconcile engine/config. |
+| `source`, `as_of`, `currency` | see audit/measurement fields | yes | Monetary reconcile audit provenance; `source` should identify the reconcile engine/config. |
 
 ## Runtime contract
 
 The dependency-free Python implementation lives in `fincouncil/data/schema.py`.
 Use `validate_record(record)` before writing normalized records to storage,
 returning them through MCP, or passing them into reconcile.
+
+
+## `news`
+
+News event record. Requires `source`, `as_of`, `published_at`, and `headline`; does not require currency. Optional fields include `symbol`, `url`, `category`, `provider_id`, and `summary`.
+
+## `sentiment`
+
+Sentiment observation record. Requires `source`, `as_of`, `observed_at`, `symbol`/topic, `score`, `scale_min`, `scale_max`, and `channel`; does not require currency.
+
+## `macro`
+
+Macro observation record. Requires `source`, `as_of`, `observation_date`, `indicator`, `value`, `unit`, `region`, and `frequency`; `currency` is optional only for monetary or FX series.
+
+## `provider_gap`
+
+Provider gap/fallback audit record. Requires `source`, `as_of`, `status`, and `primary_source`; optional fields capture symbol, market, fallback_source, error_type, failure_reason, and record_count.

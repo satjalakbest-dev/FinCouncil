@@ -1,7 +1,7 @@
 """Schema validation tests — verify canonical record contracts.
 
 These tests ensure the schema dataclasses enforce the invariants
-required by CP1/T1.1: every record has source + currency + as_of.
+required by CP1/T1.1 and Phase 2: every record has source/as_of provenance, while monetary records also have currency.
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 # DATA_SOURCES.md — แหล่งข้อมูล (ครบ)
-*Layer 0 ของระบบ · free-first · ทุก record ต้องติด `source` + `currency`*
+*Layer 0 ของระบบ · free-first · ทุก record ต้องติด `source` + temporal provenance; monetary records ต้องติด `currency`; macro records ต้องติด `unit`*
 
 ---
 

@@ -10,6 +10,7 @@ then exposes tool functions for:
 - get_fundamentals: Fundamental data
 - list_symbols: Symbol listing
 - reconcile: Cross-source verification
+- get_news/get_sentiment/get_macro: news, sentiment, and macro observations
 """
 
 from __future__ import annotations
@@ -19,7 +20,10 @@ from pathlib import Path
 from fincouncil.data.cache.manager import CacheManager
 from fincouncil.data.mcp.tools import (
     get_fundamentals,
+    get_macro,
+    get_news,
     get_price,
+    get_sentiment,
     list_symbols,
     reconcile,
 )
@@ -88,6 +92,18 @@ class FinCouncilMCPServer:
         """
         return get_fundamentals(symbol=symbol, period=period)
 
+    def get_news(self, symbol: str, start_date: str, end_date: str) -> list[dict]:
+        """Get company news for a symbol."""
+        return get_news(symbol=symbol, start_date=start_date, end_date=end_date)
+
+    def get_sentiment(self, symbol: str) -> list[dict]:
+        """Get sentiment for a symbol."""
+        return get_sentiment(symbol=symbol)
+
+    def get_macro(self, series_id: str, **kwargs) -> list[dict]:
+        """Get macro observations for a FRED series."""
+        return get_macro(series_id=series_id, **kwargs)
+
     def list_symbols(self, exchange: str = "US") -> list[dict]:
         """List supported symbols for an exchange.
 
@@ -142,4 +158,4 @@ if __name__ == "__main__":
     db_path_arg = sys.argv[1] if len(sys.argv) > 1 else ":memory:"
     server = create_server(db_path=db_path_arg)
     print(f"FinCouncil MCP Server initialized with db_path: {db_path_arg}")
-    print("Available tools: get_price, get_fundamentals, list_symbols, reconcile")
+    print("Available tools: get_price, get_fundamentals, get_news, get_sentiment, get_macro, list_symbols, reconcile")

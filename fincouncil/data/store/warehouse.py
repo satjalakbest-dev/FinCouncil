@@ -100,6 +100,75 @@ class DuckDBWarehouse:
             )
             """
         )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS news (
+                source VARCHAR NOT NULL,
+                as_of TIMESTAMP NOT NULL,
+                published_at TIMESTAMP NOT NULL,
+                headline VARCHAR NOT NULL,
+                url VARCHAR,
+                symbol VARCHAR,
+                category VARCHAR,
+                provider_id VARCHAR,
+                summary VARCHAR,
+                updated_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+                PRIMARY KEY (source, published_at, headline)
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sentiment (
+                source VARCHAR NOT NULL,
+                as_of TIMESTAMP NOT NULL,
+                observed_at TIMESTAMP NOT NULL,
+                symbol VARCHAR NOT NULL,
+                score DOUBLE NOT NULL,
+                scale_min DOUBLE NOT NULL,
+                scale_max DOUBLE NOT NULL,
+                channel VARCHAR NOT NULL,
+                label VARCHAR,
+                updated_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+                PRIMARY KEY (source, observed_at, symbol, channel)
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS macro (
+                source VARCHAR NOT NULL,
+                as_of TIMESTAMP NOT NULL,
+                observation_date DATE NOT NULL,
+                indicator VARCHAR NOT NULL,
+                value DOUBLE NOT NULL,
+                unit VARCHAR NOT NULL,
+                region VARCHAR NOT NULL,
+                frequency VARCHAR NOT NULL,
+                currency VARCHAR,
+                series_id VARCHAR,
+                updated_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+                PRIMARY KEY (source, indicator, observation_date, region)
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS provider_gap_log (
+                source VARCHAR NOT NULL,
+                as_of TIMESTAMP NOT NULL,
+                status VARCHAR NOT NULL,
+                primary_source VARCHAR NOT NULL,
+                symbol VARCHAR,
+                market VARCHAR,
+                fallback_source VARCHAR,
+                error_type VARCHAR,
+                failure_reason VARCHAR,
+                record_count BIGINT NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+            )
+            """
+        )
 
     def upsert_prices(self, rows: Iterable[Mapping[str, Any]] | pd.DataFrame) -> int:
         """Insert or update normalized price rows by ``(symbol, date, source)``.
@@ -181,6 +250,36 @@ class DuckDBWarehouse:
             )
         finally:
             self._connection.unregister("reconcile_rows")
+        return len(frame)
+
+    def upsert_news(self, rows: Iterable[Mapping[str, Any]] | pd.DataFrame) -> int:
+        return self._insert_by_name("news", rows)
+
+    def upsert_sentiment(self, rows: Iterable[Mapping[str, Any]] | pd.DataFrame) -> int:
+        return self._insert_by_name("sentiment", rows)
+
+    def upsert_macro(self, rows: Iterable[Mapping[str, Any]] | pd.DataFrame) -> int:
+        return self._insert_by_name("macro", rows)
+
+    def insert_provider_gap_log(self, rows: Iterable[Mapping[str, Any]] | pd.DataFrame) -> int:
+        return self._insert_by_name("provider_gap_log", rows)
+
+    def table_count(self, table: str) -> int:
+        if table not in {"prices", "fundamentals", "symbols", "reconcile_log", "news", "sentiment", "macro", "provider_gap_log"}:
+            raise ValueError(f"unsupported table: {table}")
+        row = self._connection.execute(f"SELECT count(*) FROM {table}").fetchone()
+        return 0 if row is None else int(row[0])
+
+    def _insert_by_name(self, table: str, rows: Iterable[Mapping[str, Any]] | pd.DataFrame) -> int:
+        frame = rows.copy() if isinstance(rows, pd.DataFrame) else pd.DataFrame(list(rows))
+        if frame.empty:
+            return 0
+        view_name = f"{table}_rows"
+        self._connection.register(view_name, frame)
+        try:
+            self._connection.execute(f"INSERT INTO {table} BY NAME SELECT * FROM {view_name}")
+        finally:
+            self._connection.unregister(view_name)
         return len(frame)
 
     def query_prices(

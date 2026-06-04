@@ -1,9 +1,9 @@
 """Canonical FinCouncil data-layer record contracts.
 
-The Phase 1 data layer intentionally starts with dependency-free runtime
-contracts so adapters, normalization, storage, reconcile, MCP, and the later
-TradingAgents shim can agree on field names before provider code exists.
-Every public record carries source, currency, and as_of for auditability.
+Canonical records separate audit provenance from measurement semantics.
+Every public record carries ``source`` and ``as_of`` for auditability.
+Monetary/security valuation records additionally carry ``currency``; macro
+observations carry explicit ``unit`` and only use ``currency`` when meaningful.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from enum import Enum
 from typing import Any, Literal, Mapping, NewType, Sequence
 
 CurrencyCode = NewType("CurrencyCode", str)
-RecordKind = Literal["price", "fundamentals", "symbol", "reconcile_log"]
+RecordKind = Literal["price", "fundamentals", "symbol", "reconcile_log", "news", "sentiment", "macro", "provider_gap"]
 
 PHASE1_CURRENCY_CODES = frozenset(
     {
@@ -64,17 +64,26 @@ class ReconcileStatus(str, Enum):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SourceStampedRecord:
-    """Common audit fields required on every canonical record."""
+class AuditStampedRecord:
+    """Common audit provenance required on every canonical record."""
 
     source: str
-    currency: CurrencyCode
     as_of: date | datetime
 
-    def validate_common(self) -> None:
+    def validate_audit(self) -> None:
         _require_non_empty("source", self.source)
-        _validate_currency(self.currency)
         _validate_temporal("as_of", self.as_of)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceStampedRecord(AuditStampedRecord):
+    """Audit fields plus mandatory currency for monetary records."""
+
+    currency: CurrencyCode
+
+    def validate_common(self) -> None:
+        self.validate_audit()
+        _validate_currency(self.currency)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -222,7 +231,108 @@ class ReconcileLogRecord(SourceStampedRecord):
         _require_non_empty("explanation", self.explanation)
 
 
-CanonicalRecord = PriceRecord | FundamentalsRecord | SymbolRecord | ReconcileLogRecord
+@dataclass(frozen=True, kw_only=True)
+class NewsRecord(AuditStampedRecord):
+    """Canonical news event record. Currency is intentionally not required."""
+
+    kind: Literal["news"] = "news"
+    headline: str
+    published_at: datetime
+    url: str | None = None
+    symbol: str | None = None
+    category: str | None = None
+    provider_id: str | None = None
+    summary: str | None = None
+
+    def validate(self) -> None:
+        self.validate_audit()
+        _require_non_empty("headline", self.headline)
+        _validate_temporal("published_at", self.published_at)
+        for field_name in ("url", "symbol", "category", "provider_id"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_non_empty(field_name, value)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SentimentRecord(AuditStampedRecord):
+    """Canonical sentiment observation record with explicit score scale."""
+
+    kind: Literal["sentiment"] = "sentiment"
+    symbol: str
+    score: Decimal
+    scale_min: Decimal
+    scale_max: Decimal
+    observed_at: datetime
+    channel: str
+    label: str | None = None
+
+    def validate(self) -> None:
+        self.validate_audit()
+        _require_non_empty("symbol", self.symbol)
+        _require_non_empty("channel", self.channel)
+        _validate_temporal("observed_at", self.observed_at)
+        for field_name in ("score", "scale_min", "scale_max"):
+            _validate_decimal(field_name, getattr(self, field_name))
+        if self.scale_min >= self.scale_max:
+            raise ValidationError("scale_min must be less than scale_max")
+        if self.score < self.scale_min or self.score > self.scale_max:
+            raise ValidationError("score must fall within scale_min/scale_max")
+
+
+@dataclass(frozen=True, kw_only=True)
+class MacroRecord(AuditStampedRecord):
+    """Canonical macro observation record with unit-first semantics."""
+
+    kind: Literal["macro"] = "macro"
+    indicator: str
+    value: Decimal
+    unit: str
+    region: str
+    frequency: str
+    observation_date: date
+    currency: CurrencyCode | None = None
+    series_id: str | None = None
+
+    def validate(self) -> None:
+        self.validate_audit()
+        for field_name in ("indicator", "unit", "region", "frequency"):
+            _require_non_empty(field_name, getattr(self, field_name))
+        _validate_temporal("observation_date", self.observation_date)
+        _validate_decimal("value", self.value)
+        if self.currency is not None:
+            _validate_currency(self.currency)
+        if self.series_id is not None:
+            _require_non_empty("series_id", self.series_id)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProviderGapRecord(AuditStampedRecord):
+    """Audit record for explicit provider gaps, paid hooks, and fallbacks."""
+
+    kind: Literal["provider_gap"] = "provider_gap"
+    status: str
+    primary_source: str
+    symbol: str | None = None
+    market: str | None = None
+    fallback_source: str | None = None
+    error_type: str | None = None
+    failure_reason: str | None = None
+    record_count: int = 0
+
+    def validate(self) -> None:
+        self.validate_audit()
+        _require_non_empty("status", self.status)
+        _require_non_empty("primary_source", self.primary_source)
+        if self.record_count < 0:
+            raise ValidationError("record_count must be non-negative")
+        for field_name in ("symbol", "market", "fallback_source", "error_type", "failure_reason"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_non_empty(field_name, value)
+
+
+CanonicalRecord = PriceRecord | FundamentalsRecord | SymbolRecord | ReconcileLogRecord | NewsRecord | SentimentRecord | MacroRecord | ProviderGapRecord
 
 _CORE_STATEMENT_FIELDS = frozenset(
     {
@@ -250,7 +360,7 @@ def validate_record(record: CanonicalRecord) -> None:
     """Validate any canonical FinCouncil data-layer record."""
 
     if not isinstance(
-        record, (PriceRecord, FundamentalsRecord, SymbolRecord, ReconcileLogRecord)
+        record, (PriceRecord, FundamentalsRecord, SymbolRecord, ReconcileLogRecord, NewsRecord, SentimentRecord, MacroRecord, ProviderGapRecord)
     ):
         raise ValidationError(f"unsupported canonical record type: {type(record)!r}")
     record.validate()

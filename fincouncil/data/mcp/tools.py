@@ -3,20 +3,28 @@
 These are thin orchestration functions that compose the data pipeline:
 adapters → normalize → cache → warehouse.
 
-Each tool returns canonical records with source/currency/as_of fields.
+Each tool returns canonical records with source/as_of provenance. Monetary
+records include currency; macro records include unit and optional currency.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from fincouncil.data.adapters.akshare import AkShareAdapter
 from fincouncil.data.adapters.base import BaseAdapter
+from fincouncil.data.adapters.finnhub import FinnhubAdapter
+from fincouncil.data.adapters.fred import FREDAdapter
 from fincouncil.data.adapters.openbb import OpenBBAdapter
 from fincouncil.data.adapters.yfinance import YFinanceAdapter
 from fincouncil.data.cache.manager import CacheManager
+from fincouncil.data.fallback import get_price_with_akshare_yfinance_fallback
 from fincouncil.data.reconcile.engine import ReconcileEngine
+from fincouncil.data.normalize.macro import normalize_macro_records
+from fincouncil.data.normalize.news import normalize_news_records, normalize_sentiment_records
+from fincouncil.data.normalize.price import normalize_price_records
 from fincouncil.data.schema import CurrencyCode, PriceRecord
 from fincouncil.data.symbols.mapping import supported_exchanges
 
@@ -42,6 +50,8 @@ def get_price(
     warehouse: Any | None = None,
     source: str | None = None,
     currency: str = "USD",
+    adapter: Any | None = None,
+    fallback_adapter: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Get EOD price data for a symbol.
 
@@ -53,9 +63,11 @@ def get_price(
         warehouse: Optional warehouse for CacheManager. Required if cache_manager is None.
         source: Optional data source filter (e.g., "openbb:yfinance").
         currency: ISO currency code (default: "USD").
+        adapter: Optional primary adapter override for tests/custom routing.
+        fallback_adapter: Optional fallback adapter override for AkShare→yfinance.
 
     Returns:
-        List of canonical PriceRecord dicts with source/currency/as_of fields.
+        List of canonical PriceRecord dicts with source/as_of provenance and currency.
 
     Raises:
         InvalidParameterError: If parameters are invalid.
@@ -67,9 +79,14 @@ def get_price(
     start = date.fromisoformat(start_date)
     end = date.fromisoformat(end_date)
 
-    # If no source specified, use yfinance as default
+    exchange = _exchange_for_symbol(symbol)
+    use_akshare_route = _should_use_akshare_route(exchange, source, adapter)
+    if currency == "USD":
+        currency = _default_market_currency(exchange)
+
+    # If no source specified, use the market-appropriate default.
     if source is None:
-        source = "yfinance:yfinance"
+        source = "akshare:price" if use_akshare_route else "yfinance:yfinance"
 
     # Setup cache manager if not provided
     if cache_manager is None:
@@ -81,8 +98,19 @@ def get_price(
             warehouse = DuckDBWarehouse(str(warehouse))
         cache_manager = CacheManager(warehouse)
 
-    # Use YFinance adapter as default (OpenBB optional)
-    adapter = YFinanceAdapter()
+    selected_adapter = adapter or (AkShareAdapter() if use_akshare_route else YFinanceAdapter())
+
+    if use_akshare_route:
+        return _get_cn_hk_price_with_fallback(
+            symbol=symbol,
+            start=start,
+            end=end,
+            cache_manager=cache_manager,
+            primary_adapter=selected_adapter,
+            fallback_adapter=fallback_adapter,
+            currency=currency,
+            source=source,
+        )
 
     # Fetch prices via cache manager
     try:
@@ -90,7 +118,7 @@ def get_price(
             symbol=symbol,
             start_date=start,
             end_date=end,
-            adapter=adapter,
+            adapter=selected_adapter,
             currency=CurrencyCode(currency),
             source=source,
         )
@@ -149,6 +177,84 @@ def get_fundamentals(
 
     # Return raw records for now — normalization will be added in future phases
     return list(raw_records)
+
+
+def get_news(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    *,
+    adapter: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Get company news as canonical NewsRecord dicts."""
+    _validate_symbol(symbol)
+    _validate_dates(start_date, end_date)
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    adapter = adapter or FinnhubAdapter()
+    if not adapter.is_available():
+        raise DataNotAvailableError("Finnhub news adapter is not available")
+    raw = adapter.get_news(symbol, start, end)
+    if not raw:
+        raise DataNotAvailableError(f"No news available for {symbol}")
+    records = normalize_news_records(raw, source="finnhub:company-news", symbol=symbol)
+    return [_record_to_dict(record) for record in records]
+
+
+def get_sentiment(
+    symbol: str,
+    *,
+    adapter: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Get news/social sentiment as canonical SentimentRecord dicts."""
+    _validate_symbol(symbol)
+    adapter = adapter or FinnhubAdapter()
+    if not adapter.is_available():
+        raise DataNotAvailableError("Finnhub sentiment adapter is not available")
+    raw = adapter.get_sentiment(symbol)
+    if not raw:
+        raise DataNotAvailableError(f"No sentiment available for {symbol}")
+    rows: list[dict[str, Any]] = []
+    for row in raw:
+        if "score" in row:
+            rows.append(row)
+            continue
+        # Finnhub news-sentiment exposes nested bullish/bearish percentages.
+        score = row.get("sentiment", {}).get("bullishPercent") if isinstance(row.get("sentiment"), dict) else None
+        if score is None:
+            score = row.get("reddit", {}).get("score") if isinstance(row.get("reddit"), dict) else 0
+        rows.append({**row, "score": score, "scale_min": 0, "scale_max": 1, "channel": row.get("channel", "aggregate")})
+    records = normalize_sentiment_records(rows, source="finnhub:news-sentiment", symbol=symbol)
+    return [_record_to_dict(record) for record in records]
+
+
+def get_macro(
+    series_id: str,
+    *,
+    indicator: str | None = None,
+    unit: str = "index",
+    region: str = "US",
+    frequency: str = "unknown",
+    adapter: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Get FRED macro observations as canonical MacroRecord dicts."""
+    _validate_symbol(series_id)
+    adapter = adapter or FREDAdapter()
+    if not adapter.is_available():
+        raise DataNotAvailableError("FRED macro adapter is not available")
+    raw = adapter.get_macro(series_id)
+    if not raw:
+        raise DataNotAvailableError(f"No macro data available for {series_id}")
+    records = normalize_macro_records(
+        raw,
+        source="fred:series_observations",
+        indicator=indicator or series_id,
+        unit=unit,
+        region=region,
+        frequency=frequency,
+        series_id=series_id,
+    )
+    return [_record_to_dict(record) for record in records]
 
 
 def list_symbols(exchange: str = "US") -> list[dict[str, Any]]:
@@ -327,6 +433,113 @@ def _validate_price_field(field: str) -> None:
     valid_fields = {"open", "high", "low", "close", "adjusted_close"}
     if field not in valid_fields:
         raise InvalidParameterError(f"Invalid field: {field}. Must be one of {valid_fields}")
+
+
+_AKSHARE_EXCHANGES = {"SSE", "SZSE", "SH", "SZ", "HK", "HKEX"}
+
+
+def _exchange_for_symbol(symbol: str) -> str:
+    if ":" not in symbol:
+        return "US"
+    return symbol.split(":", 1)[0].upper()
+
+
+def _should_use_akshare_route(
+    exchange: str,
+    source: str | None,
+    adapter: Any | None,
+) -> bool:
+    if isinstance(adapter, AkShareAdapter) or getattr(adapter, "name", None) == "akshare":
+        return True
+    if adapter is not None:
+        return source in {"akshare:price", "fallback:akshare_to_yfinance"}
+    if exchange not in _AKSHARE_EXCHANGES:
+        return False
+    if source is None:
+        return True
+    return source in {"akshare:price", "fallback:akshare_to_yfinance"}
+
+
+def _default_market_currency(exchange: str) -> str:
+    if exchange in {"HK", "HKEX"}:
+        return "HKD"
+    if exchange in {"SSE", "SZSE", "SH", "SZ"}:
+        return "CNY"
+    if exchange in {"TSE", "JP"}:
+        return "JPY"
+    if exchange in {"SET", "TH"}:
+        return "THB"
+    return "USD"
+
+
+def _get_cn_hk_price_with_fallback(
+    *,
+    symbol: str,
+    start: date,
+    end: date,
+    cache_manager: CacheManager,
+    primary_adapter: Any,
+    fallback_adapter: Any | None,
+    currency: str,
+    source: str,
+) -> list[dict[str, Any]]:
+    """Route CN/HK prices through AkShare first, with persisted fallback audit."""
+
+    try:
+        rows, audit = get_price_with_akshare_yfinance_fallback(
+            symbol,
+            start,
+            end,
+            akshare_adapter=primary_adapter,
+            yfinance_adapter=fallback_adapter,
+        )
+        if not rows:
+            raise DataNotAvailableError(f"No price data available for {symbol} in date range")
+
+        final_source = str(rows[0].get("source") or source)
+        records = normalize_price_records(
+            rows,
+            symbol=symbol,
+            source=final_source,
+            currency=currency,
+            as_of=datetime.now(timezone.utc),
+        )
+        cache_manager.put_prices(records)
+        if audit is not None:
+            _persist_provider_gap(audit, getattr(cache_manager, "_warehouse", None))
+        return [_record_to_dict(record) for record in records]
+    except DataNotAvailableError:
+        raise
+    except Exception as exc:
+        raise DataNotAvailableError(f"Failed to fetch price data for {symbol}") from exc
+
+
+def _persist_provider_gap(record: Any, warehouse: Any | None) -> None:
+    if warehouse is None or not hasattr(warehouse, "insert_provider_gap_log"):
+        return
+    row = {
+        "source": record.source,
+        "as_of": record.as_of,
+        "status": record.status,
+        "primary_source": record.primary_source,
+        "symbol": record.symbol,
+        "market": record.market,
+        "fallback_source": record.fallback_source,
+        "error_type": record.error_type,
+        "failure_reason": record.failure_reason,
+        "record_count": record.record_count,
+    }
+    try:
+        warehouse.insert_provider_gap_log([row])
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Failed to persist provider gap for %s via %s",
+            getattr(record, "symbol", "?"),
+            getattr(record, "source", "?"),
+            exc_info=True,
+        )
 
 
 def _record_to_dict(record: Any) -> dict[str, Any]:

@@ -8,6 +8,10 @@ Adapters return raw provider output. Normalization into canonical
 from fincouncil.data.adapters.base import BaseAdapter
 from fincouncil.data.adapters.openbb import OpenBBAdapter, OpenBBAdapterError, OpenBBUnavailableError
 from fincouncil.data.adapters.yfinance import YFinanceAdapter, YFinanceAdapterError, YFinanceUnavailableError
+from fincouncil.data.adapters.finnhub import FinnhubAdapter, FinnhubAdapterError, FinnhubUnavailableError
+from fincouncil.data.adapters.fred import FREDAdapter, FREDAdapterError, FREDUnavailableError
+from fincouncil.data.adapters.akshare import AkShareAdapter, AkShareAdapterError, AkShareUnavailableError
+from fincouncil.data.adapters.tushare import TushareAdapter, PaidProviderNotEnabledError
 
 __all__ = [
     "BaseAdapter",
@@ -17,4 +21,15 @@ __all__ = [
     "YFinanceAdapter",
     "YFinanceAdapterError",
     "YFinanceUnavailableError",
+    "FinnhubAdapter",
+    "FinnhubAdapterError",
+    "FinnhubUnavailableError",
+    "FREDAdapter",
+    "FREDAdapterError",
+    "FREDUnavailableError",
+    "AkShareAdapter",
+    "AkShareAdapterError",
+    "AkShareUnavailableError",
+    "TushareAdapter",
+    "PaidProviderNotEnabledError",
 ]

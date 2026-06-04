@@ -112,7 +112,7 @@ class TestCP1GetPrice:
 
 
 # ---------------------------------------------------------------------------
-# CP1 Criterion 2: Every record has source + currency
+# CP1 Criterion 2: Monetary price/fundamental records have source + currency
 # ---------------------------------------------------------------------------
 
 class TestCP1SourceCurrency:
@@ -149,7 +149,7 @@ class TestCP1SourceCurrency:
     def test_all_market_records_have_source_and_currency(
         self, record_fixture: str, request: Any
     ) -> None:
-        """Every record across all markets must have source + currency."""
+        """CP1 monetary price records across all markets must have source + currency."""
         rec = request.getfixturevalue(record_fixture)
         assert rec.source
         assert rec.currency

@@ -33,9 +33,18 @@ from fincouncil.data.schema import (
 # ---------------------------------------------------------------------------
 
 YFINANCE_LIVE_ENV = "YFINANCE_LIVE"
+AKSHARE_LIVE_ENV = "AKSHARE_LIVE"
+FINNHUB_KEY_ENV = "FINNHUB_API_KEY"
+FRED_KEY_ENV = "FRED_API_KEY"
 YFINANCE_LIVE_SKIP_REASON = "Set YFINANCE_LIVE=1 to run yfinance live tests"
+AKSHARE_LIVE_SKIP_REASON = "Set AKSHARE_LIVE=1 to run AkShare live tests"
+FINNHUB_SKIP_REASON = "Set FINNHUB_API_KEY to run Finnhub live tests"
+FRED_SKIP_REASON = "Set FRED_API_KEY to run FRED live tests"
 YFINANCE_MARKER_CONTRACT_SKIP_REASON = (
     "yfinance live tests require both @pytest.mark.live and @pytest.mark.yfinance"
+)
+AKSHARE_MARKER_CONTRACT_SKIP_REASON = (
+    "AkShare live tests require both @pytest.mark.live and @pytest.mark.akshare"
 )
 MISSING_CREDENTIALS_SKIP_REASON = "No provider credentials in environment"
 
@@ -65,6 +74,19 @@ def yfinance_live_enabled() -> bool:
     return os.getenv(YFINANCE_LIVE_ENV) == "1"
 
 
+def akshare_live_enabled() -> bool:
+    """Return True only when AkShare live tests are explicitly enabled."""
+    return os.getenv(AKSHARE_LIVE_ENV) == "1"
+
+
+def finnhub_live_enabled() -> bool:
+    return bool(os.getenv(FINNHUB_KEY_ENV))
+
+
+def fred_live_enabled() -> bool:
+    return bool(os.getenv(FRED_KEY_ENV))
+
+
 def pytest_configure(config: Any) -> None:
     """Register live-provider markers used by the suite."""
     config.addinivalue_line(
@@ -75,6 +97,9 @@ def pytest_configure(config: Any) -> None:
         "markers",
         "yfinance: yfinance-specific live provider test; requires YFINANCE_LIVE=1",
     )
+    config.addinivalue_line("markers", "akshare: AkShare live provider test; requires AKSHARE_LIVE=1")
+    config.addinivalue_line("markers", "finnhub: Finnhub live provider test; requires FINNHUB_API_KEY")
+    config.addinivalue_line("markers", "fred: FRED live provider test; requires FRED_API_KEY")
 
 
 def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
@@ -87,17 +112,29 @@ def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
     """
     skip_missing_credentials = pytest.mark.skip(reason=MISSING_CREDENTIALS_SKIP_REASON)
     skip_yfinance = pytest.mark.skip(reason=YFINANCE_LIVE_SKIP_REASON)
+    skip_akshare = pytest.mark.skip(reason=AKSHARE_LIVE_SKIP_REASON)
+    skip_finnhub = pytest.mark.skip(reason=FINNHUB_SKIP_REASON)
+    skip_fred = pytest.mark.skip(reason=FRED_SKIP_REASON)
     has_credentials = has_any_provider_credential()
     run_yfinance_live = yfinance_live_enabled()
+    run_akshare_live = akshare_live_enabled()
 
     skip_yfinance_marker_contract = pytest.mark.skip(
         reason=YFINANCE_MARKER_CONTRACT_SKIP_REASON
+    )
+    skip_akshare_marker_contract = pytest.mark.skip(
+        reason=AKSHARE_MARKER_CONTRACT_SKIP_REASON
     )
 
     for item in items:
         is_live = "live" in item.keywords
         is_yfinance_marked = "yfinance" in item.keywords
-        is_yfinance_file = "yfinance" in str(getattr(item, "nodeid", ""))
+        is_akshare_marked = "akshare" in item.keywords
+        is_finnhub_marked = "finnhub" in item.keywords
+        is_fred_marked = "fred" in item.keywords
+        nodeid = str(getattr(item, "nodeid", ""))
+        is_yfinance_file = "yfinance" in nodeid
+        is_akshare_file = "akshare" in nodeid
 
         if is_yfinance_marked and not is_live:
             item.add_marker(skip_yfinance_marker_contract)
@@ -107,12 +144,35 @@ def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
             item.add_marker(skip_yfinance_marker_contract)
             continue
 
+        if is_akshare_marked and not is_live:
+            item.add_marker(skip_akshare_marker_contract)
+            continue
+
+        if is_live and is_akshare_file and not is_akshare_marked:
+            item.add_marker(skip_akshare_marker_contract)
+            continue
+
         if not is_live:
             continue
 
         if is_yfinance_marked:
             if not run_yfinance_live:
                 item.add_marker(skip_yfinance)
+            continue
+
+        if is_akshare_marked:
+            if not run_akshare_live:
+                item.add_marker(skip_akshare)
+            continue
+
+        if is_finnhub_marked:
+            if not finnhub_live_enabled():
+                item.add_marker(skip_finnhub)
+            continue
+
+        if is_fred_marked:
+            if not fred_live_enabled():
+                item.add_marker(skip_fred)
             continue
 
         if not has_credentials:
